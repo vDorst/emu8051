@@ -48,10 +48,12 @@ pub struct MCS51 {
     pub op_pc: u16,
     program: Vec<u8>,
     pub special_function_registers: [u8; MCS51_REGISTERS::REGISTER_COUNT as usize],
-    pub ram: [u8; 255],
+    pub ram: [u8; 256],
+    pub xdata: [u8; 48 * 1024],
     pub additional_cycles: u8,
     pub dispatch: [fn(&mut MCS51); 256],
     pub debug: bool,
+    pub int_pc: Option<u16>,
 }
 
 impl MCS51 {
@@ -59,12 +61,14 @@ impl MCS51 {
         MCS51 {
             pc: 0,
             op_pc: 0,
-            ram: [0; 255],
+            ram: [0; 256],
             program: vec![],
             special_function_registers: [0; MCS51_REGISTERS::REGISTER_COUNT as usize],
             additional_cycles: 0,
             dispatch: [|_cpu| {}; 256],
             debug: false,
+            xdata: [0; _],
+            int_pc: None,
         }
     }
 
@@ -76,7 +80,7 @@ impl MCS51 {
 
     pub fn pop_stack(&mut self) -> u8 {
         let sp = self.get_stack_pointer();
-        let val = *self.read(sp).unwrap();
+        let val = self.read_idirect(sp).unwrap();
         self.write_sfr_rel(MCS51_REGISTERS::SP, 1, true);
         val
     }
@@ -303,6 +307,10 @@ impl MCS51 {
                 .get_mut(MCS51_REGISTERS::B as usize),
             _ => None,
         }
+    }
+
+    pub fn read_idirect(&self, address: u8) -> Option<u8> {
+        self.ram.get(address as usize).copied()
     }
 
     pub fn read(&self, address: u8) -> Option<&u8> {
@@ -1771,13 +1779,18 @@ impl MCS51 {
 
     pub fn op_swap(&mut self) {
         let acc = self.get_accumulator();
-        let lo = acc & 0xF;
-        let hi = (acc & 0xF0) >> 4;
-        self.set_accumulator((lo << 4) + hi);
+        self.set_accumulator(acc.rotate_right(4));
     }
 
     pub fn op_movx_a_ri(&mut self, reg: u8) {
-        let _src_addr = self.get_u8(MCS51_ADDRESSING::REGISTER(reg));
+        let src_addr = self.get_u8(MCS51_ADDRESSING::REGISTER(reg));
+        if let Some(val) =
+            src_addr.and_then(|src_addr| self.xdata.get(usize::from(src_addr)).copied())
+        {
+            self.set_accumulator(val);
+        } else {
+            println!("Error XDATA outside meme!")
+        }
     }
 
     pub fn op_movx_ri_a(&mut self, reg: u8) {
@@ -2248,7 +2261,7 @@ impl MCU<u8> for MCS51 {
     }
 
     fn run_opcode(&mut self, opcode: u8) {
-        println!("Opcode {opcode:02x}");
+        // println!("Opcode {opcode:02x}");
         self.opcode_dispatch_table(opcode)
     }
 
@@ -2264,7 +2277,7 @@ impl MCU<u8> for MCS51 {
 
     fn reset(&mut self) {
         self.pc = 0;
-        self.ram = [0; 255];
+        self.ram = [0; 256];
         self.additional_cycles = 0;
         self.reset_registers();
     }

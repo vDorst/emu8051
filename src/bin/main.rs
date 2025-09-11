@@ -149,6 +149,20 @@ mod tests {
     }
 
     #[test]
+    fn reti_test() {
+        let mut mcu = MCS51::new();
+        mcu.setup();
+        mcu.debug = true;
+        mcu.set_stack_pointer(0x20);
+
+        mcu.set_program(vec![0x00, 0x32]);
+        mcu.next_instruction();
+
+        mcu.next_instruction();
+        assert_eq!(mcu.get_stack_pointer(), 0x1E);
+    }
+
+    #[test]
     fn add_operations_mcs51() {
         let mut mcu = MCS51::new();
         mcu.setup();
@@ -454,8 +468,8 @@ fn run_mcs51_file(filename: &str) {
 }
 
 fn main() {
-    test_emulator_mcs51();
-    //repl_mcs51("data/1594462804_raw.bin");
+    // test_emulator_mcs51();
+    repl_mcs51("data/1594462804_raw.bin");
     //test_decompile_mcs51();
 
     //run_mcs51(vec![0x78, 0x39, 0x79, 0x05, 0x7B, 0x10, 0xE8, 0x13, 0x50, 0x01, 0x0A, 0xBB, 0x08, 0x01, 0xE9, 0xDB, 0xF6]);
