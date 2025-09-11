@@ -1,0 +1,714 @@
+                                      1 ;--------------------------------------------------------
+                                      2 ; File Created by SDCC : free open source ISO C Compiler
+                                      3 ; Version 4.5.0 #15242 (Linux)
+                                      4 ;--------------------------------------------------------
+                                      5 	.module installer
+                                      6 	
+                                      7 	.optsdcc -mmcs51 --model-small
+                                      8 ;--------------------------------------------------------
+                                      9 ; Public variables in this module
+                                     10 ;--------------------------------------------------------
+                                     11 	.globl _installer
+                                     12 	.globl _setup_serial
+                                     13 	.globl _print_string
+                                     14 	.globl _write_char
+                                     15 	.globl _isr_ext1
+                                     16 	.globl _isr_ext0
+                                     17 	.globl _isr_timer0
+                                     18 	.globl _SFR_FLASH_EXEC_BUSY
+                                     19 	.globl _SFR_FLASH_EXEC_GO
+                                     20 	.globl _PX3
+                                     21 	.globl _EX3
+                                     22 	.globl _EX2
+                                     23 	.globl _CY
+                                     24 	.globl _AC
+                                     25 	.globl _F0
+                                     26 	.globl _RS1
+                                     27 	.globl _RS0
+                                     28 	.globl _OV
+                                     29 	.globl _F1
+                                     30 	.globl _P
+                                     31 	.globl _PS
+                                     32 	.globl _PT1
+                                     33 	.globl _PX1
+                                     34 	.globl _PT0
+                                     35 	.globl _PX0
+                                     36 	.globl _RD
+                                     37 	.globl _WR
+                                     38 	.globl _T1
+                                     39 	.globl _T0
+                                     40 	.globl _INT1
+                                     41 	.globl _INT0
+                                     42 	.globl _TXD
+                                     43 	.globl _RXD
+                                     44 	.globl _P3_7
+                                     45 	.globl _P3_6
+                                     46 	.globl _P3_5
+                                     47 	.globl _P3_4
+                                     48 	.globl _P3_3
+                                     49 	.globl _P3_2
+                                     50 	.globl _P3_1
+                                     51 	.globl _P3_0
+                                     52 	.globl _EA
+                                     53 	.globl _ES
+                                     54 	.globl _ET1
+                                     55 	.globl _EX1
+                                     56 	.globl _ET0
+                                     57 	.globl _EX0
+                                     58 	.globl _P2_7
+                                     59 	.globl _P2_6
+                                     60 	.globl _P2_5
+                                     61 	.globl _P2_4
+                                     62 	.globl _P2_3
+                                     63 	.globl _P2_2
+                                     64 	.globl _P2_1
+                                     65 	.globl _P2_0
+                                     66 	.globl _SM0
+                                     67 	.globl _SM1
+                                     68 	.globl _SM2
+                                     69 	.globl _REN
+                                     70 	.globl _TB8
+                                     71 	.globl _RB8
+                                     72 	.globl _TI
+                                     73 	.globl _RI
+                                     74 	.globl _P1_7
+                                     75 	.globl _P1_6
+                                     76 	.globl _P1_5
+                                     77 	.globl _P1_4
+                                     78 	.globl _P1_3
+                                     79 	.globl _P1_2
+                                     80 	.globl _P1_1
+                                     81 	.globl _P1_0
+                                     82 	.globl _TF1
+                                     83 	.globl _TR1
+                                     84 	.globl _TF0
+                                     85 	.globl _TR0
+                                     86 	.globl _IE1
+                                     87 	.globl _IT1
+                                     88 	.globl _IE0
+                                     89 	.globl _IT0
+                                     90 	.globl _P0_7
+                                     91 	.globl _P0_6
+                                     92 	.globl _P0_5
+                                     93 	.globl _P0_4
+                                     94 	.globl _P0_3
+                                     95 	.globl _P0_2
+                                     96 	.globl _P0_1
+                                     97 	.globl _P0_0
+                                     98 	.globl _SFR_NIC_RING_H
+                                     99 	.globl _SFR_NIC_RING_L
+                                    100 	.globl _SFR_NIC_RING_U16LE
+                                    101 	.globl _SFR_NIC_DATA_H
+                                    102 	.globl _SFR_NIC_DATA_L
+                                    103 	.globl _SFR_NIC_DATA_U16LE
+                                    104 	.globl _SFR_NIC_CTRL
+                                    105 	.globl _SFR_FLASH_ADDR0
+                                    106 	.globl _SFR_FLASH_ADDR8
+                                    107 	.globl _SFR_FLASH_ADDR16
+                                    108 	.globl _SFR_FLASH_DATA0
+                                    109 	.globl _SFR_FLASH_DATA8
+                                    110 	.globl _SFR_FLASH_DATA16
+                                    111 	.globl _SFR_FLASH_DATA24
+                                    112 	.globl _SFR_FLASH_TCONF
+                                    113 	.globl _SFR_FLASH_MODEB
+                                    114 	.globl _SFR_FLASH_DUMMYCICLES
+                                    115 	.globl _SFR_FLASH_CONF_RCMD
+                                    116 	.globl _SFR_FLASH_CONF_DIV
+                                    117 	.globl _SFR_FLASH_CONFIG
+                                    118 	.globl _SFR_FLASH_CMD
+                                    119 	.globl _SFR_FLASH_CMD_R
+                                    120 	.globl _SFR_FLASH_EXEC
+                                    121 	.globl _SFR_94
+                                    122 	.globl _SFR_93
+                                    123 	.globl _SFR_ba
+                                    124 	.globl _SFR_b9
+                                    125 	.globl _SFR_97
+                                    126 	.globl _CKCON
+                                    127 	.globl _SFR_BANK_RET
+                                    128 	.globl _PSBANK
+                                    129 	.globl _RCAP2H
+                                    130 	.globl _RCAP2L
+                                    131 	.globl _T2CON
+                                    132 	.globl _EIP
+                                    133 	.globl _EXIF
+                                    134 	.globl _EIE
+                                    135 	.globl _SFR_SMI_PHYMASK
+                                    136 	.globl _SFR_SMI_DEV
+                                    137 	.globl _SFR_SMI_REG_L
+                                    138 	.globl _SFR_SMI_REG_H
+                                    139 	.globl _SFR_SMI_REG_U16
+                                    140 	.globl _SFR_DATA_0
+                                    141 	.globl _SFR_DATA_8
+                                    142 	.globl _SFR_DATA_16
+                                    143 	.globl _SFR_DATA_24
+                                    144 	.globl _SFR_DATA_U32LE
+                                    145 	.globl _SFR_DATA_U32
+                                    146 	.globl _SFR_DATA_U16
+                                    147 	.globl _SFR_REG_ADDRL
+                                    148 	.globl _SFR_REG_ADDRH
+                                    149 	.globl _SFR_REG_ADDR_U16
+                                    150 	.globl _SFR_EXEC_STATUS
+                                    151 	.globl _SFR_EXEC_GO
+                                    152 	.globl _B
+                                    153 	.globl _ACC
+                                    154 	.globl _PSW
+                                    155 	.globl _IP
+                                    156 	.globl _P3
+                                    157 	.globl _IE
+                                    158 	.globl _P2
+                                    159 	.globl _SBUF
+                                    160 	.globl _SCON
+                                    161 	.globl _P1
+                                    162 	.globl _TH1
+                                    163 	.globl _TH0
+                                    164 	.globl _TL1
+                                    165 	.globl _TL0
+                                    166 	.globl _TMOD
+                                    167 	.globl _TCON
+                                    168 	.globl _PCON
+                                    169 	.globl _DPH
+                                    170 	.globl _DPL
+                                    171 	.globl _SP
+                                    172 	.globl _P0
+                                    173 	.globl _sleep_ticks
+                                    174 	.globl _sec_counter
+                                    175 	.globl _ticks
+                                    176 ;--------------------------------------------------------
+                                    177 ; special function registers
+                                    178 ;--------------------------------------------------------
+                                    179 	.area RSEG    (ABS,DATA)
+      000000                        180 	.org 0x0000
+                           000080   181 _P0	=	0x0080
+                           000081   182 _SP	=	0x0081
+                           000082   183 _DPL	=	0x0082
+                           000083   184 _DPH	=	0x0083
+                           000087   185 _PCON	=	0x0087
+                           000088   186 _TCON	=	0x0088
+                           000089   187 _TMOD	=	0x0089
+                           00008A   188 _TL0	=	0x008a
+                           00008B   189 _TL1	=	0x008b
+                           00008C   190 _TH0	=	0x008c
+                           00008D   191 _TH1	=	0x008d
+                           000090   192 _P1	=	0x0090
+                           000098   193 _SCON	=	0x0098
+                           000099   194 _SBUF	=	0x0099
+                           0000A0   195 _P2	=	0x00a0
+                           0000A8   196 _IE	=	0x00a8
+                           0000B0   197 _P3	=	0x00b0
+                           0000B8   198 _IP	=	0x00b8
+                           0000D0   199 _PSW	=	0x00d0
+                           0000E0   200 _ACC	=	0x00e0
+                           0000F0   201 _B	=	0x00f0
+                           0000A0   202 _SFR_EXEC_GO	=	0x00a0
+                           0000A1   203 _SFR_EXEC_STATUS	=	0x00a1
+                           00A2A3   204 _SFR_REG_ADDR_U16	=	0xa2a3
+                           0000A2   205 _SFR_REG_ADDRH	=	0x00a2
+                           0000A3   206 _SFR_REG_ADDRL	=	0x00a3
+                           00A6A7   207 _SFR_DATA_U16	=	0xa6a7
+                           FFA5A6A7   208 _SFR_DATA_U32	=	0xa4a5a6a7
+                           FFA6A5A4   209 _SFR_DATA_U32LE	=	0xa7a6a5a4
+                           0000A4   210 _SFR_DATA_24	=	0x00a4
+                           0000A5   211 _SFR_DATA_16	=	0x00a5
+                           0000A6   212 _SFR_DATA_8	=	0x00a6
+                           0000A7   213 _SFR_DATA_0	=	0x00a7
+                           00C2C3   214 _SFR_SMI_REG_U16	=	0xc2c3
+                           0000C2   215 _SFR_SMI_REG_H	=	0x00c2
+                           0000C3   216 _SFR_SMI_REG_L	=	0x00c3
+                           0000C4   217 _SFR_SMI_DEV	=	0x00c4
+                           0000C5   218 _SFR_SMI_PHYMASK	=	0x00c5
+                           0000E8   219 _EIE	=	0x00e8
+                           000091   220 _EXIF	=	0x0091
+                           0000F8   221 _EIP	=	0x00f8
+                           0000C8   222 _T2CON	=	0x00c8
+                           0000CA   223 _RCAP2L	=	0x00ca
+                           0000CB   224 _RCAP2H	=	0x00cb
+                           000096   225 _PSBANK	=	0x0096
+                           0000BB   226 _SFR_BANK_RET	=	0x00bb
+                           00008E   227 _CKCON	=	0x008e
+                           000097   228 _SFR_97	=	0x0097
+                           0000B9   229 _SFR_b9	=	0x00b9
+                           0000BA   230 _SFR_ba	=	0x00ba
+                           000093   231 _SFR_93	=	0x0093
+                           000094   232 _SFR_94	=	0x0094
+                           000080   233 _SFR_FLASH_EXEC	=	0x0080
+                           0000B1   234 _SFR_FLASH_CMD_R	=	0x00b1
+                           0000B2   235 _SFR_FLASH_CMD	=	0x00b2
+                           0000BC   236 _SFR_FLASH_CONFIG	=	0x00bc
+                           00009B   237 _SFR_FLASH_CONF_DIV	=	0x009b
+                           00009C   238 _SFR_FLASH_CONF_RCMD	=	0x009c
+                           00009D   239 _SFR_FLASH_DUMMYCICLES	=	0x009d
+                           00009A   240 _SFR_FLASH_MODEB	=	0x009a
+                           00009E   241 _SFR_FLASH_TCONF	=	0x009e
+                           0000AF   242 _SFR_FLASH_DATA24	=	0x00af
+                           0000AE   243 _SFR_FLASH_DATA16	=	0x00ae
+                           0000AD   244 _SFR_FLASH_DATA8	=	0x00ad
+                           0000AC   245 _SFR_FLASH_DATA0	=	0x00ac
+                           0000AB   246 _SFR_FLASH_ADDR16	=	0x00ab
+                           0000AA   247 _SFR_FLASH_ADDR8	=	0x00aa
+                           0000A9   248 _SFR_FLASH_ADDR0	=	0x00a9
+                           0000B7   249 _SFR_NIC_CTRL	=	0x00b7
+                           00B4B3   250 _SFR_NIC_DATA_U16LE	=	0xb4b3
+                           0000B3   251 _SFR_NIC_DATA_L	=	0x00b3
+                           0000B4   252 _SFR_NIC_DATA_H	=	0x00b4
+                           00B6B5   253 _SFR_NIC_RING_U16LE	=	0xb6b5
+                           0000B5   254 _SFR_NIC_RING_L	=	0x00b5
+                           0000B6   255 _SFR_NIC_RING_H	=	0x00b6
+                                    256 ;--------------------------------------------------------
+                                    257 ; special function bits
+                                    258 ;--------------------------------------------------------
+                                    259 	.area RSEG    (ABS,DATA)
+      000000                        260 	.org 0x0000
+                           000080   261 _P0_0	=	0x0080
+                           000081   262 _P0_1	=	0x0081
+                           000082   263 _P0_2	=	0x0082
+                           000083   264 _P0_3	=	0x0083
+                           000084   265 _P0_4	=	0x0084
+                           000085   266 _P0_5	=	0x0085
+                           000086   267 _P0_6	=	0x0086
+                           000087   268 _P0_7	=	0x0087
+                           000088   269 _IT0	=	0x0088
+                           000089   270 _IE0	=	0x0089
+                           00008A   271 _IT1	=	0x008a
+                           00008B   272 _IE1	=	0x008b
+                           00008C   273 _TR0	=	0x008c
+                           00008D   274 _TF0	=	0x008d
+                           00008E   275 _TR1	=	0x008e
+                           00008F   276 _TF1	=	0x008f
+                           000090   277 _P1_0	=	0x0090
+                           000091   278 _P1_1	=	0x0091
+                           000092   279 _P1_2	=	0x0092
+                           000093   280 _P1_3	=	0x0093
+                           000094   281 _P1_4	=	0x0094
+                           000095   282 _P1_5	=	0x0095
+                           000096   283 _P1_6	=	0x0096
+                           000097   284 _P1_7	=	0x0097
+                           000098   285 _RI	=	0x0098
+                           000099   286 _TI	=	0x0099
+                           00009A   287 _RB8	=	0x009a
+                           00009B   288 _TB8	=	0x009b
+                           00009C   289 _REN	=	0x009c
+                           00009D   290 _SM2	=	0x009d
+                           00009E   291 _SM1	=	0x009e
+                           00009F   292 _SM0	=	0x009f
+                           0000A0   293 _P2_0	=	0x00a0
+                           0000A1   294 _P2_1	=	0x00a1
+                           0000A2   295 _P2_2	=	0x00a2
+                           0000A3   296 _P2_3	=	0x00a3
+                           0000A4   297 _P2_4	=	0x00a4
+                           0000A5   298 _P2_5	=	0x00a5
+                           0000A6   299 _P2_6	=	0x00a6
+                           0000A7   300 _P2_7	=	0x00a7
+                           0000A8   301 _EX0	=	0x00a8
+                           0000A9   302 _ET0	=	0x00a9
+                           0000AA   303 _EX1	=	0x00aa
+                           0000AB   304 _ET1	=	0x00ab
+                           0000AC   305 _ES	=	0x00ac
+                           0000AF   306 _EA	=	0x00af
+                           0000B0   307 _P3_0	=	0x00b0
+                           0000B1   308 _P3_1	=	0x00b1
+                           0000B2   309 _P3_2	=	0x00b2
+                           0000B3   310 _P3_3	=	0x00b3
+                           0000B4   311 _P3_4	=	0x00b4
+                           0000B5   312 _P3_5	=	0x00b5
+                           0000B6   313 _P3_6	=	0x00b6
+                           0000B7   314 _P3_7	=	0x00b7
+                           0000B0   315 _RXD	=	0x00b0
+                           0000B1   316 _TXD	=	0x00b1
+                           0000B2   317 _INT0	=	0x00b2
+                           0000B3   318 _INT1	=	0x00b3
+                           0000B4   319 _T0	=	0x00b4
+                           0000B5   320 _T1	=	0x00b5
+                           0000B6   321 _WR	=	0x00b6
+                           0000B7   322 _RD	=	0x00b7
+                           0000B8   323 _PX0	=	0x00b8
+                           0000B9   324 _PT0	=	0x00b9
+                           0000BA   325 _PX1	=	0x00ba
+                           0000BB   326 _PT1	=	0x00bb
+                           0000BC   327 _PS	=	0x00bc
+                           0000D0   328 _P	=	0x00d0
+                           0000D1   329 _F1	=	0x00d1
+                           0000D2   330 _OV	=	0x00d2
+                           0000D3   331 _RS0	=	0x00d3
+                           0000D4   332 _RS1	=	0x00d4
+                           0000D5   333 _F0	=	0x00d5
+                           0000D6   334 _AC	=	0x00d6
+                           0000D7   335 _CY	=	0x00d7
+                           0000E8   336 _EX2	=	0x00e8
+                           0000E9   337 _EX3	=	0x00e9
+                           0000F9   338 _PX3	=	0x00f9
+                           000082   339 _SFR_FLASH_EXEC_GO	=	0x0082
+                           000080   340 _SFR_FLASH_EXEC_BUSY	=	0x0080
+                                    341 ;--------------------------------------------------------
+                                    342 ; overlayable register banks
+                                    343 ;--------------------------------------------------------
+                                    344 	.area REG_BANK_0	(REL,OVR,DATA)
+      000000                        345 	.ds 8
+                                    346 ;--------------------------------------------------------
+                                    347 ; internal ram data
+                                    348 ;--------------------------------------------------------
+                                    349 	.area DSEG    (DATA)
+                                    350 ;--------------------------------------------------------
+                                    351 ; overlayable items in internal ram
+                                    352 ;--------------------------------------------------------
+                                    353 	.area	OSEG    (OVR,DATA)
+                                    354 ;--------------------------------------------------------
+                                    355 ; indirectly addressable internal ram data
+                                    356 ;--------------------------------------------------------
+                                    357 	.area ISEG    (DATA)
+                                    358 ;--------------------------------------------------------
+                                    359 ; absolute internal ram data
+                                    360 ;--------------------------------------------------------
+                                    361 	.area IABS    (ABS,DATA)
+                                    362 	.area IABS    (ABS,DATA)
+                                    363 ;--------------------------------------------------------
+                                    364 ; bit data
+                                    365 ;--------------------------------------------------------
+                                    366 	.area BSEG    (BIT)
+                                    367 ;--------------------------------------------------------
+                                    368 ; paged external ram data
+                                    369 ;--------------------------------------------------------
+                                    370 	.area PSEG    (PAG,XDATA)
+                                    371 ;--------------------------------------------------------
+                                    372 ; uninitialized external ram data
+                                    373 ;--------------------------------------------------------
+                                    374 	.area XSEG    (XDATA)
+      000000                        375 _ticks::
+      000000                        376 	.ds 4
+      000004                        377 _sec_counter::
+      000004                        378 	.ds 1
+      000005                        379 _sleep_ticks::
+      000005                        380 	.ds 2
+                                    381 ;--------------------------------------------------------
+                                    382 ; absolute external ram data
+                                    383 ;--------------------------------------------------------
+                                    384 	.area XABS    (ABS,XDATA)
+                                    385 ;--------------------------------------------------------
+                                    386 ; initialized external ram data
+                                    387 ;--------------------------------------------------------
+                                    388 	.area XISEG   (XDATA)
+                                    389 	.area HOME    (CODE)
+                                    390 	.area GSINIT0 (CODE)
+                                    391 	.area GSINIT1 (CODE)
+                                    392 	.area GSINIT2 (CODE)
+                                    393 	.area GSINIT3 (CODE)
+                                    394 	.area GSINIT4 (CODE)
+                                    395 	.area GSINIT5 (CODE)
+                                    396 	.area GSINIT  (CODE)
+                                    397 	.area GSFINAL (CODE)
+                                    398 	.area CSEG    (CODE)
+                                    399 ;--------------------------------------------------------
+                                    400 ; global & static initialisations
+                                    401 ;--------------------------------------------------------
+                                    402 	.area HOME    (CODE)
+                                    403 	.area GSINIT  (CODE)
+                                    404 	.area GSFINAL (CODE)
+                                    405 	.area GSINIT  (CODE)
+                                    406 ;--------------------------------------------------------
+                                    407 ; Home
+                                    408 ;--------------------------------------------------------
+                                    409 	.area HOME    (CODE)
+                                    410 	.area HOME    (CODE)
+                                    411 ;--------------------------------------------------------
+                                    412 ; code
+                                    413 ;--------------------------------------------------------
+                                    414 	.area CSEG    (CODE)
+                                    415 ;------------------------------------------------------------
+                                    416 ;Allocation info for local variables in function 'isr_timer0'
+                                    417 ;------------------------------------------------------------
+                                    418 ;	installer.c:28: void isr_timer0(void) __interrupt(1)
+                                    419 ;	-----------------------------------------
+                                    420 ;	 function isr_timer0
+                                    421 ;	-----------------------------------------
+      000000                        422 _isr_timer0:
+                           000007   423 	ar7 = 0x07
+                           000006   424 	ar6 = 0x06
+                           000005   425 	ar5 = 0x05
+                           000004   426 	ar4 = 0x04
+                           000003   427 	ar3 = 0x03
+                           000002   428 	ar2 = 0x02
+                           000001   429 	ar1 = 0x01
+                           000000   430 	ar0 = 0x00
+      000000 C0 E0            [24]  431 	push	acc
+      000002 C0 82            [24]  432 	push	dpl
+      000004 C0 83            [24]  433 	push	dph
+      000006 C0 07            [24]  434 	push	ar7
+      000008 C0 06            [24]  435 	push	ar6
+      00000A C0 05            [24]  436 	push	ar5
+      00000C C0 04            [24]  437 	push	ar4
+      00000E C0 D0            [24]  438 	push	psw
+      000010 75 D0 00         [24]  439 	mov	psw,#0x00
+                                    440 ;	installer.c:30: TR0 = 0;		// Stop timer 0
+                                    441 ;	assignBit
+      000013 C2 8C            [12]  442 	clr	_TR0
+                                    443 ;	installer.c:31: TH0 = (0x10000 - (CLOCK_HZ / SYS_TICK_HZ / 32)) >> 8;
+      000015 75 8C 67         [24]  444 	mov	_TH0,#0x67
+                                    445 ;	installer.c:32: TL0 = (0x10000 - (CLOCK_HZ / SYS_TICK_HZ / 32)) % 0xff;
+      000018 75 8A D1         [24]  446 	mov	_TL0,#0xd1
+                                    447 ;	installer.c:34: ticks++;
+      00001B 90r00r00         [24]  448 	mov	dptr,#_ticks
+      00001E E0               [24]  449 	movx	a,@dptr
+      00001F FC               [12]  450 	mov	r4,a
+      000020 A3               [24]  451 	inc	dptr
+      000021 E0               [24]  452 	movx	a,@dptr
+      000022 FD               [12]  453 	mov	r5,a
+      000023 A3               [24]  454 	inc	dptr
+      000024 E0               [24]  455 	movx	a,@dptr
+      000025 FE               [12]  456 	mov	r6,a
+      000026 A3               [24]  457 	inc	dptr
+      000027 E0               [24]  458 	movx	a,@dptr
+      000028 FF               [12]  459 	mov	r7,a
+      000029 90r00r00         [24]  460 	mov	dptr,#_ticks
+      00002C 74 01            [12]  461 	mov	a,#0x01
+      00002E 2C               [12]  462 	add	a, r4
+      00002F F0               [24]  463 	movx	@dptr,a
+      000030 E4               [12]  464 	clr	a
+      000031 3D               [12]  465 	addc	a, r5
+      000032 A3               [24]  466 	inc	dptr
+      000033 F0               [24]  467 	movx	@dptr,a
+      000034 E4               [12]  468 	clr	a
+      000035 3E               [12]  469 	addc	a, r6
+      000036 A3               [24]  470 	inc	dptr
+      000037 F0               [24]  471 	movx	@dptr,a
+      000038 E4               [12]  472 	clr	a
+      000039 3F               [12]  473 	addc	a, r7
+      00003A A3               [24]  474 	inc	dptr
+      00003B F0               [24]  475 	movx	@dptr,a
+                                    476 ;	installer.c:35: if (sleep_ticks > 0)
+      00003C 90r00r05         [24]  477 	mov	dptr,#_sleep_ticks
+      00003F E0               [24]  478 	movx	a,@dptr
+      000040 FE               [12]  479 	mov	r6,a
+      000041 A3               [24]  480 	inc	dptr
+      000042 E0               [24]  481 	movx	a,@dptr
+      000043 4E               [12]  482 	orl	a,r6
+      000044 60 15            [24]  483 	jz	00102$
+                                    484 ;	installer.c:36: sleep_ticks--;
+      000046 90r00r05         [24]  485 	mov	dptr,#_sleep_ticks
+      000049 E0               [24]  486 	movx	a,@dptr
+      00004A FE               [12]  487 	mov	r6,a
+      00004B A3               [24]  488 	inc	dptr
+      00004C E0               [24]  489 	movx	a,@dptr
+      00004D FF               [12]  490 	mov	r7,a
+      00004E 1E               [12]  491 	dec	r6
+      00004F BE FF 01         [24]  492 	cjne	r6,#0xff,00112$
+      000052 1F               [12]  493 	dec	r7
+      000053                        494 00112$:
+      000053 90r00r05         [24]  495 	mov	dptr,#_sleep_ticks
+      000056 EE               [12]  496 	mov	a,r6
+      000057 F0               [24]  497 	movx	@dptr,a
+      000058 EF               [12]  498 	mov	a,r7
+      000059 A3               [24]  499 	inc	dptr
+      00005A F0               [24]  500 	movx	@dptr,a
+      00005B                        501 00102$:
+                                    502 ;	installer.c:37: sec_counter++;
+      00005B 90r00r04         [24]  503 	mov	dptr,#_sec_counter
+      00005E E0               [24]  504 	movx	a,@dptr
+      00005F 04               [12]  505 	inc	a
+      000060 F0               [24]  506 	movx	@dptr,a
+                                    507 ;	installer.c:39: TR0 = 1;		// Re-start timer 0
+                                    508 ;	assignBit
+      000061 D2 8C            [12]  509 	setb	_TR0
+                                    510 ;	installer.c:40: }
+      000063 D0 D0            [24]  511 	pop	psw
+      000065 D0 04            [24]  512 	pop	ar4
+      000067 D0 05            [24]  513 	pop	ar5
+      000069 D0 06            [24]  514 	pop	ar6
+      00006B D0 07            [24]  515 	pop	ar7
+      00006D D0 83            [24]  516 	pop	dph
+      00006F D0 82            [24]  517 	pop	dpl
+      000071 D0 E0            [24]  518 	pop	acc
+      000073 32               [24]  519 	reti
+                                    520 ;	eliminated unneeded push/pop b
+                                    521 ;------------------------------------------------------------
+                                    522 ;Allocation info for local variables in function 'isr_ext0'
+                                    523 ;------------------------------------------------------------
+                                    524 ;	installer.c:43: void isr_ext0(void) __interrupt(0)
+                                    525 ;	-----------------------------------------
+                                    526 ;	 function isr_ext0
+                                    527 ;	-----------------------------------------
+      000074                        528 _isr_ext0:
+                                    529 ;	installer.c:45: EX0 = 0;	// Disable interrupt for the moment
+                                    530 ;	assignBit
+      000074 C2 A8            [12]  531 	clr	_EX0
+                                    532 ;	installer.c:46: IT0 = 1;	// Trigger on falling edge of external interrupt
+                                    533 ;	assignBit
+      000076 D2 88            [12]  534 	setb	_IT0
+                                    535 ;	installer.c:47: EX0 = 1;	// Re-enable interrupt
+                                    536 ;	assignBit
+      000078 D2 A8            [12]  537 	setb	_EX0
+                                    538 ;	installer.c:48: }
+      00007A 32               [24]  539 	reti
+                                    540 ;	eliminated unneeded mov psw,# (no regs used in bank)
+                                    541 ;	eliminated unneeded push/pop not_psw
+                                    542 ;	eliminated unneeded push/pop dpl
+                                    543 ;	eliminated unneeded push/pop dph
+                                    544 ;	eliminated unneeded push/pop b
+                                    545 ;	eliminated unneeded push/pop acc
+                                    546 ;------------------------------------------------------------
+                                    547 ;Allocation info for local variables in function 'isr_ext1'
+                                    548 ;------------------------------------------------------------
+                                    549 ;	installer.c:51: void isr_ext1(void) __interrupt(2)
+                                    550 ;	-----------------------------------------
+                                    551 ;	 function isr_ext1
+                                    552 ;	-----------------------------------------
+      00007B                        553 _isr_ext1:
+                                    554 ;	installer.c:53: EX1 = 0;
+                                    555 ;	assignBit
+      00007B C2 AA            [12]  556 	clr	_EX1
+                                    557 ;	installer.c:54: EX1 = 1;
+                                    558 ;	assignBit
+      00007D D2 AA            [12]  559 	setb	_EX1
+                                    560 ;	installer.c:55: }
+      00007F 32               [24]  561 	reti
+                                    562 ;	eliminated unneeded mov psw,# (no regs used in bank)
+                                    563 ;	eliminated unneeded push/pop not_psw
+                                    564 ;	eliminated unneeded push/pop dpl
+                                    565 ;	eliminated unneeded push/pop dph
+                                    566 ;	eliminated unneeded push/pop b
+                                    567 ;	eliminated unneeded push/pop acc
+                                    568 ;------------------------------------------------------------
+                                    569 ;Allocation info for local variables in function 'write_char'
+                                    570 ;------------------------------------------------------------
+                                    571 ;c             Allocated to registers r7 
+                                    572 ;------------------------------------------------------------
+                                    573 ;	installer.c:58: void write_char(char c)
+                                    574 ;	-----------------------------------------
+                                    575 ;	 function write_char
+                                    576 ;	-----------------------------------------
+      000080                        577 _write_char:
+      000080 AF 82            [24]  578 	mov	r7, dpl
+                                    579 ;	installer.c:60: do {
+      000082                        580 00101$:
+                                    581 ;	installer.c:62: TI = 0;
+                                    582 ;	assignBit
+      000082 10 99 02         [24]  583 	jbc	_TI,00139$
+      000085 80 FB            [24]  584 	sjmp	00101$
+      000087                        585 00139$:
+                                    586 ;	installer.c:63: if (c =='\n') {
+      000087 BF 0A 08         [24]  587 	cjne	r7,#0x0a,00106$
+                                    588 ;	installer.c:64: SBUF = '\r';
+      00008A 75 99 0D         [24]  589 	mov	_SBUF,#0x0d
+                                    590 ;	installer.c:65: do {
+      00008D                        591 00103$:
+                                    592 ;	installer.c:67: TI = 0;
+                                    593 ;	assignBit
+      00008D 10 99 02         [24]  594 	jbc	_TI,00142$
+      000090 80 FB            [24]  595 	sjmp	00103$
+      000092                        596 00142$:
+      000092                        597 00106$:
+                                    598 ;	installer.c:69: SBUF = c;
+      000092 8F 99            [24]  599 	mov	_SBUF,r7
+                                    600 ;	installer.c:70: }
+      000094 22               [24]  601 	ret
+                                    602 ;------------------------------------------------------------
+                                    603 ;Allocation info for local variables in function 'print_string'
+                                    604 ;------------------------------------------------------------
+                                    605 ;p             Allocated to registers 
+                                    606 ;------------------------------------------------------------
+                                    607 ;	installer.c:73: void print_string(__code char *p)
+                                    608 ;	-----------------------------------------
+                                    609 ;	 function print_string
+                                    610 ;	-----------------------------------------
+      000095                        611 _print_string:
+      000095 AE 82            [24]  612 	mov	r6, dpl
+      000097 AF 83            [24]  613 	mov	r7, dph
+                                    614 ;	installer.c:75: while (*p)
+      000099                        615 00101$:
+      000099 8E 82            [24]  616 	mov	dpl,r6
+      00009B 8F 83            [24]  617 	mov	dph,r7
+      00009D E4               [12]  618 	clr	a
+      00009E 93               [24]  619 	movc	a,@a+dptr
+      00009F FD               [12]  620 	mov	r5,a
+      0000A0 60 14            [24]  621 	jz	00104$
+                                    622 ;	installer.c:76: write_char(*p++);
+      0000A2 8D 82            [24]  623 	mov	dpl,r5
+      0000A4 0E               [12]  624 	inc	r6
+      0000A5 BE 00 01         [24]  625 	cjne	r6,#0x00,00120$
+      0000A8 0F               [12]  626 	inc	r7
+      0000A9                        627 00120$:
+      0000A9 C0 07            [24]  628 	push	ar7
+      0000AB C0 06            [24]  629 	push	ar6
+      0000AD 12r00r80         [24]  630 	lcall	_write_char
+      0000B0 D0 06            [24]  631 	pop	ar6
+      0000B2 D0 07            [24]  632 	pop	ar7
+      0000B4 80 E3            [24]  633 	sjmp	00101$
+      0000B6                        634 00104$:
+                                    635 ;	installer.c:77: }
+      0000B6 22               [24]  636 	ret
+                                    637 ;------------------------------------------------------------
+                                    638 ;Allocation info for local variables in function 'setup_serial'
+                                    639 ;------------------------------------------------------------
+                                    640 ;	installer.c:80: void setup_serial(void)
+                                    641 ;	-----------------------------------------
+                                    642 ;	 function setup_serial
+                                    643 ;	-----------------------------------------
+      0000B7                        644 _setup_serial:
+                                    645 ;	installer.c:82: IE = 0;
+      0000B7 75 A8 00         [24]  646 	mov	_IE,#0x00
+                                    647 ;	installer.c:84: T2CON = 0x34; // Enable RCLK/TCLK (serial transmit/receive clock for T2), TR2 (Timer 2 RUN), disable CP/RL2 (bit 0)
+      0000BA 75 C8 34         [24]  648 	mov	_T2CON,#0x34
+                                    649 ;	installer.c:85: SCON = 0x50;  // Mode = 1: ASYNC 8N1 with T2 as baud-rate generator, REN_0 Receive enable
+      0000BD 75 98 50         [24]  650 	mov	_SCON,#0x50
+                                    651 ;	installer.c:89: RCAP2H = (0x10000 - (CLOCK_HZ / SERIAL_BAUD_RATE / 32)) >> 8;
+      0000C0 75 CB FF         [24]  652 	mov	_RCAP2H,#0xff
+                                    653 ;	installer.c:90: RCAP2L = (0x10000 - (CLOCK_HZ / SERIAL_BAUD_RATE / 32)) % 0xff;
+      0000C3 75 CA BD         [24]  654 	mov	_RCAP2L,#0xbd
+                                    655 ;	installer.c:92: PCON |= 0x80; // Double the Baud Rate
+      0000C6 43 87 80         [24]  656 	orl	_PCON,#0x80
+                                    657 ;	installer.c:94: SCON = 0x50;
+      0000C9 75 98 50         [24]  658 	mov	_SCON,#0x50
+                                    659 ;	installer.c:95: TI = 1;
+                                    660 ;	assignBit
+      0000CC D2 99            [12]  661 	setb	_TI
+                                    662 ;	installer.c:96: RI = 0;
+                                    663 ;	assignBit
+      0000CE C2 98            [12]  664 	clr	_RI
+                                    665 ;	installer.c:98: ES = 1; // Enable serial IRQ
+                                    666 ;	assignBit
+      0000D0 D2 AC            [12]  667 	setb	_ES
+                                    668 ;	installer.c:99: }
+      0000D2 22               [24]  669 	ret
+                                    670 ;------------------------------------------------------------
+                                    671 ;Allocation info for local variables in function 'installer'
+                                    672 ;------------------------------------------------------------
+                                    673 ;	installer.c:102: void installer(void)
+                                    674 ;	-----------------------------------------
+                                    675 ;	 function installer
+                                    676 ;	-----------------------------------------
+      0000D3                        677 _installer:
+                                    678 ;	installer.c:105: CKCON = 0;	// Initial Clock configuration
+      0000D3 75 8E 00         [24]  679 	mov	_CKCON,#0x00
+                                    680 ;	installer.c:106: SFR_97 = 0;	// HADDR?
+      0000D6 75 97 00         [24]  681 	mov	_SFR_97,#0x00
+                                    682 ;	installer.c:109: SFR_b9 = 0x00;
+      0000D9 75 B9 00         [24]  683 	mov	_SFR_b9,#0x00
+                                    684 ;	installer.c:110: SFR_ba = 0x80;
+      0000DC 75 BA 80         [24]  685 	mov	_SFR_ba,#0x80
+                                    686 ;	installer.c:113: IE = 0;
+      0000DF 75 A8 00         [24]  687 	mov	_IE,#0x00
+                                    688 ;	installer.c:114: EIE = 0;  // SFR e8: EIE. Disable all external IRQs
+      0000E2 75 E8 00         [24]  689 	mov	_EIE,#0x00
+                                    690 ;	installer.c:117: EA = 0; // SFR A8.7 / IE.7
+                                    691 ;	assignBit
+      0000E5 C2 AF            [12]  692 	clr	_EA
+                                    693 ;	installer.c:119: setup_serial();
+      0000E7 12r00rB7         [24]  694 	lcall	_setup_serial
+                                    695 ;	installer.c:120: while (1)
+      0000EA                        696 00102$:
+                                    697 ;	installer.c:121: print_string("Image installer running\n");
+      0000EA 90r00r00         [24]  698 	mov	dptr,#___str_0
+      0000ED 12r00r95         [24]  699 	lcall	_print_string
+                                    700 ;	installer.c:122: }
+      0000F0 80 F8            [24]  701 	sjmp	00102$
+                                    702 	.area CSEG    (CODE)
+                                    703 	.area CONST   (CODE)
+                                    704 	.area CONST   (CODE)
+      000000                        705 ___str_0:
+      000000 49 6D 61 67 65 20 69   706 	.ascii "Image installer running"
+             6E 73 74 61 6C 6C 65
+             72 20 72 75 6E 6E 69
+             6E 67
+      000017 0A                     707 	.db 0x0a
+      000018 00                     708 	.db 0x00
+                                    709 	.area CSEG    (CODE)
+                                    710 	.area XINIT   (CODE)
+                                    711 	.area CABS    (ABS,CODE)
