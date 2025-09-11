@@ -191,6 +191,12 @@ pub struct PIC16F628A {
     gpr3: [u8; 48],
 }
 
+impl Default for PIC16F628A {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PIC16F628A {
     pub fn new() -> PIC16F628A {
         PIC16F628A {
@@ -228,7 +234,7 @@ impl PIC16F628A {
         let pc = self.pc_read();
 
         if offset < 0 {
-            self.pc_write(pc.wrapping_sub(offset.abs() as u16));
+            self.pc_write(pc.wrapping_sub(offset.unsigned_abs() as u16));
         } else {
             self.pc_write(pc.wrapping_add(offset as u16));
         }
@@ -253,12 +259,12 @@ impl PIC16F628A {
     pub fn pc_read(&self) -> u16 {
         let l = self.read_register(PIC16F628A_REGISTERS::PCL) as u16;
         let h = self.read_register(PIC16F628A_REGISTERS::PCLATH) as u16;
-        return l + (h << 8);
+        l + (h << 8)
     }
 
     pub fn get_current_bank(&self) -> u8 {
         let reg = self.get_register(PIC16F628A_REGISTERS::STATUS).unwrap();
-        return (reg >> 5) & 0b011;
+        (reg >> 5) & 0b011
     }
 
     pub fn set_bank(&mut self, bank: u8) {
@@ -326,7 +332,7 @@ impl PIC16F628A {
     }
 
     pub fn get_flag(&self, register: PIC16F628A_REGISTERS, flag: u8) -> bool {
-        return (self.read_register(register) & flag) > 0;
+        (self.read_register(register) & flag) > 0
     }
 
     pub fn set_flag(&mut self, register: PIC16F628A_REGISTERS, flag: u8, value: bool) {
@@ -343,7 +349,7 @@ impl PIC16F628A {
     }
 
     pub fn get_carry_flag(&self) -> bool {
-        return self.get_flag(PIC16F628A_REGISTERS::STATUS, 0x01);
+        self.get_flag(PIC16F628A_REGISTERS::STATUS, 0x01)
     }
 
     pub fn set_digital_carry_flag(&mut self, value: bool) {
@@ -351,7 +357,7 @@ impl PIC16F628A {
     }
 
     pub fn get_digital_carry_flag(&self) -> bool {
-        return self.get_flag(PIC16F628A_REGISTERS::STATUS, 0x02);
+        self.get_flag(PIC16F628A_REGISTERS::STATUS, 0x02)
     }
 
     pub fn set_zero_flag(&mut self, value: bool) {
@@ -359,7 +365,7 @@ impl PIC16F628A {
     }
 
     pub fn get_zero_flag(&self) -> bool {
-        return self.get_flag(PIC16F628A_REGISTERS::STATUS, 0x04);
+        self.get_flag(PIC16F628A_REGISTERS::STATUS, 0x04)
     }
 
     pub fn set_memory_address(&mut self, address: u8, value: u8) {
@@ -544,7 +550,7 @@ impl PIC16F628A {
     }
 
     pub fn read(&self, address: u8) -> u8 {
-        return *self.get_memory_address(address).unwrap();
+        *self.get_memory_address(address).unwrap()
     }
 
     /* 
@@ -561,7 +567,7 @@ impl PIC16F628A {
             self.stack_pointer -= 1;
         }
 
-        return res;
+        res
     }
 
     /*
@@ -680,7 +686,7 @@ impl PIC16F628A {
         let acc = self.w as u16;
         let res = acc + data;
 
-        self.set_digital_carry_flag((acc & 0xF + data & 0xF) > 0xF);
+        self.set_digital_carry_flag((acc & (0xF + data) & 0xF) > 0xF);
         self.set_carry_flag(res & 0xFF00 != 0);
         self.set_zero_flag(res == 0);
 
@@ -697,9 +703,9 @@ impl PIC16F628A {
         self.set_zero_flag(res == 0);
 
         if d {
-            self.w = res as u8;
+            self.w = res;
         } else {
-            self.write(f, res as u8);
+            self.write(f, res);
         }
     }
 
@@ -792,9 +798,9 @@ impl PIC16F628A {
         self.set_zero_flag(res == 0);
 
         if d {
-            self.w = res as u8;
+            self.w = res;
         } else {
-            self.write(f, res as u8);
+            self.write(f, res);
         }
     }
 
@@ -837,7 +843,7 @@ impl PIC16F628A {
     fn op_rrf(&mut self, f: u8, d: bool) {
         let mut data = self.read(f) as u16;
         let new_carry = (data & 1) > 0;
-        data = data >> 1 + ((self.get_carry_flag() as u16) << 7);
+        data >>= 1 + ((self.get_carry_flag() as u16) << 7);
 
         self.set_carry_flag(new_carry);
 
@@ -867,12 +873,12 @@ impl PIC16F628A {
 
     fn op_swapf(&mut self, f: u8, d: bool) {
         let data = self.read(f);
-        let new_data = (data << 4) + (data >> 4);
+        let new_data = data.rotate_right(4);
 
         if d {
-            self.write(f, new_data as u8);
+            self.write(f, new_data);
         } else {
-            self.w = new_data as u8;
+            self.w = new_data;
         }
     }
 
@@ -881,9 +887,9 @@ impl PIC16F628A {
         let new_data = data ^ self.w;
 
         if d {
-            self.write(f, new_data as u8);
+            self.write(f, new_data);
         } else {
-            self.w = new_data as u8;
+            self.w = new_data;
         }
     }
 

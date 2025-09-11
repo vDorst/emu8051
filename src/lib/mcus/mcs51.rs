@@ -1,5 +1,4 @@
-use crate::lib::decompiler::mcs51;
-use crate::lib::traits::component::*;
+use crate::traits::component::MCU;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MCS51_REGISTERS {
@@ -57,18 +56,16 @@ pub struct MCS51 {
 
 impl MCS51 {
     pub fn new() -> MCS51 {
-        let mcs51 = MCS51 {
+        MCS51 {
             pc: 0,
             op_pc: 0,
             ram: [0; 255],
             program: vec![],
             special_function_registers: [0; MCS51_REGISTERS::REGISTER_COUNT as usize],
             additional_cycles: 0,
-            dispatch: [|cpu| {}; 256],
+            dispatch: [|_cpu| {}; 256],
             debug: false,
-        };
-
-        mcs51
+        }
     }
 
     pub fn push_stack(&mut self, value: u8) {
@@ -81,7 +78,7 @@ impl MCS51 {
         let sp = self.get_stack_pointer();
         let val = *self.read(sp).unwrap();
         self.write_sfr_rel(MCS51_REGISTERS::SP, 1, true);
-        return val;
+        val
     }
 
     pub fn set_stack_pointer(&mut self, value: u8) {
@@ -89,15 +86,15 @@ impl MCS51 {
     }
 
     pub fn get_stack_pointer(&mut self) -> u8 {
-        return self.read_sfr(MCS51_REGISTERS::SP);
+        self.read_sfr(MCS51_REGISTERS::SP)
     }
 
     pub fn get_sfr_mut(&mut self, register: MCS51_REGISTERS) -> Option<&mut u8> {
-        return self.special_function_registers.get_mut(register as usize);
+        self.special_function_registers.get_mut(register as usize)
     }
 
     pub fn read_sfr(&self, register: MCS51_REGISTERS) -> u8 {
-        return self.special_function_registers[register as usize];
+        self.special_function_registers[register as usize]
     }
 
     pub fn write_sfr(&mut self, register: MCS51_REGISTERS, value: u8) {
@@ -127,23 +124,23 @@ impl MCS51 {
     }
 
     pub fn get_current_register_bank(&self) -> u8 {
-        return self.get_current_register_bank_flags() >> 3;
+        self.get_current_register_bank_flags() >> 3
     }
 
     pub fn get_current_register_bank_flags(&self) -> u8 {
         let psw = self.read_sfr(MCS51_REGISTERS::PSW);
-        let bank = psw & 0b11000;
-        return bank;
+
+        psw & 0b11000
     }
 
     pub fn get_register_mut(&mut self, register: u8) -> Option<&mut u8> {
         let bank = self.get_current_register_bank_flags();
-        return self.ram.get_mut(register as usize + bank as usize);
+        self.ram.get_mut(register as usize + bank as usize)
     }
 
     pub fn read_register(&self, register: u8) -> u8 {
         let bank = self.get_current_register_bank_flags();
-        return self.ram[register as usize + bank as usize];
+        self.ram[register as usize + bank as usize]
     }
 
     pub fn write_register(&mut self, register: u8, value: u8) {
@@ -152,7 +149,7 @@ impl MCS51 {
     }
 
     pub fn read_code_byte(&mut self, addr: usize) -> u8 {
-        return self.program[addr];
+        self.program[addr]
     }
 
     /*
@@ -165,18 +162,18 @@ impl MCS51 {
     */
 
     pub fn read_bit(&self, address: u8) -> bool {
-        let register = address >> 3;
-        let bit = address & 0x7;
+        let register = address & 0xF8;
+        let bit = 1 << (address & 0x7);
 
-        let value = self.read((register * 0x08) + 0x80);
+        let value = self.read(register);
         let val = *value.unwrap();
-        return (val & bit) != 0;
+        (val & bit) != 0
     }
 
-    pub fn write_bit(&mut self, address: u8, value: bool) {        
+    pub fn write_bit(&mut self, address: u8, value: bool) {
         let addr = address & 0xF8;
 
-        //println!("{:0x} {:0x}", address, addr);
+        println!("{:0x} {:0x} {value}", address, addr);
 
         let bit = address & 0x7;
         let mut src = *self.read(addr).unwrap();
@@ -428,14 +425,14 @@ impl MCS51 {
 
     pub fn set_dptr(&mut self, value: u16) {
         self.write_sfr(MCS51_REGISTERS::DPH, (value >> 8) as u8);
-        self.write_sfr(MCS51_REGISTERS::DPL, value as u8 & 0xFF);
+        self.write_sfr(MCS51_REGISTERS::DPL, value as u8);
     }
 
     pub fn get_dptr(&mut self) -> u16 {
         let dph = self.read_sfr(MCS51_REGISTERS::DPH);
         let dpl = self.read_sfr(MCS51_REGISTERS::DPL);
 
-        return ((dph as u16) << 8) + dpl as u16;
+        ((dph as u16) << 8) + dpl as u16
     }
 
     pub fn set_carry_flag(&mut self, value: bool) {
@@ -448,7 +445,7 @@ impl MCS51 {
     }
 
     pub fn get_carry_flag(&mut self) -> bool {
-        return self.read_sfr(MCS51_REGISTERS::PSW) & 0x80 != 0;
+        self.read_sfr(MCS51_REGISTERS::PSW) & 0x80 != 0
     }
 
     pub fn set_aux_carry_flag(&mut self, value: bool) {
@@ -461,7 +458,7 @@ impl MCS51 {
     }
 
     pub fn get_aux_carry_flag(&mut self) -> bool {
-        return self.read_sfr(MCS51_REGISTERS::PSW) & 0x40 != 0;
+        self.read_sfr(MCS51_REGISTERS::PSW) & 0x40 != 0
     }
 
     pub fn set_overflow_flag(&mut self, value: bool) {
@@ -474,11 +471,11 @@ impl MCS51 {
     }
 
     pub fn get_overflow_flag(&mut self) -> bool {
-        return self.read_sfr(MCS51_REGISTERS::PSW) & 0x04 != 0;
+        self.read_sfr(MCS51_REGISTERS::PSW) & 0x04 != 0
     }
 
     pub fn get_accumulator(&self) -> u8 {
-        return self.special_function_registers[MCS51_REGISTERS::ACC as usize];
+        self.special_function_registers[MCS51_REGISTERS::ACC as usize]
     }
 
     pub fn set_accumulator(&mut self, value: u8) {
@@ -519,7 +516,7 @@ impl MCS51 {
             self.pc = 0;
         }
 
-        let opcode = self.program[self.pc as usize];
+        let _opcode = self.program[self.pc as usize];
         //self.opcode_dispatch_match(opcode);
     }
 
@@ -536,10 +533,9 @@ impl MCS51 {
         match addressing {
             MCS51_ADDRESSING::ACCUMULATOR => self.write_sfr(MCS51_REGISTERS::ACC, value),
             MCS51_ADDRESSING::REGISTER(reg) => self.write_register(reg, value),
-            MCS51_ADDRESSING::DIRECT(offset) => self.write(
-                self.program[self.op_pc as usize + offset as usize],
-                value,
-            ),
+            MCS51_ADDRESSING::DIRECT(offset) => {
+                self.write(self.program[self.op_pc as usize + offset as usize], value)
+            }
             MCS51_ADDRESSING::INDIRECT_Ri(reg) => self.write(self.read_register(reg), value),
             _ => {
                 println!("Unsupported addressing mode");
@@ -559,7 +555,7 @@ impl MCS51 {
             MCS51_ADDRESSING::INDIRECT_Ri(reg) => self.get_mut_addr(self.read_register(reg)),
             _ => {
                 println!("Unsupported addressing mode");
-                return None;
+                None
             }
         }
     }
@@ -573,15 +569,13 @@ impl MCS51 {
                     .read(self.program[self.op_pc as usize + offset as usize])
                     .unwrap(),
             ),
-            MCS51_ADDRESSING::INDIRECT_Ri(reg) => {
-                self.read(self.read_register(reg)).cloned()
-            }
+            MCS51_ADDRESSING::INDIRECT_Ri(reg) => self.read(self.read_register(reg)).cloned(),
             MCS51_ADDRESSING::DATA(offset) => {
                 Some(self.program[self.op_pc as usize + offset as usize])
             }
             _ => {
                 println!("Unsupported addressing mode");
-                return None;
+                None
             }
         }
     }
@@ -590,11 +584,13 @@ impl MCS51 {
         match addressing {
             MCS51_ADDRESSING::DATA(offset) => {
                 //Some(i8::from_be_bytes([*self.read(offset).unwrap()]))
-                Some(i8::from_be_bytes([self.program[self.op_pc as usize + offset as usize]]))
+                Some(i8::from_be_bytes([
+                    self.program[self.op_pc as usize + offset as usize]
+                ]))
             }
             _ => {
                 println!("Unsupported addressing mode");
-                return None;
+                None
             }
         }
     }
@@ -607,7 +603,7 @@ impl MCS51 {
                 data.copy_from_slice(&self.program[offset..offset + 2]);
                 let addr = u16::from_be_bytes(data);
 
-                return Some(addr);
+                Some(addr)
             }
             MCS51_ADDRESSING::DATA(off) => {
                 let offset: usize = self.op_pc as usize + off as usize;
@@ -615,11 +611,11 @@ impl MCS51 {
                 let mut data: [u8; 2] = [0; 2];
                 data.copy_from_slice(&self.program[offset..offset + 2]);
                 let dat = u16::from_be_bytes(data);
-                return Some(dat);
+                Some(dat)
             }
             _ => {
                 println!("Unsupported addressing mode");
-                return None;
+                None
             }
         }
     }
@@ -628,7 +624,7 @@ impl MCS51 {
         let hi_byte = (self.program[self.op_pc as usize] as u16) << 3;
         let lo_byte = self.program[self.op_pc as usize + 1];
         let addr: u16 = hi_byte + lo_byte as u16;
-        return addr;
+        addr
     }
 
     /*
@@ -652,6 +648,7 @@ impl MCS51 {
             cpu.opcode_additional_work("RR", 0, 1);
         };
         self.dispatch[0x04] = |cpu: &mut MCS51| {
+            println!("Acc");
             cpu.op_inc(MCS51_ADDRESSING::ACCUMULATOR);
             cpu.opcode_additional_work("INC", 0, 1);
         };
@@ -1319,7 +1316,9 @@ impl MCS51 {
             cpu.op_mul();
             cpu.opcode_additional_work("MUL", 3, 1)
         };
-        self.dispatch[0xA5] = |cpu: &mut MCS51| { cpu.opcode_additional_work("RESERVED", 0, 0); };
+        self.dispatch[0xA5] = |cpu: &mut MCS51| {
+            cpu.opcode_additional_work("RESERVED", 0, 0);
+        };
         self.dispatch[0xA6] = |cpu: &mut MCS51| {
             cpu.op_mov(
                 MCS51_ADDRESSING::INDIRECT_Ri(0),
@@ -1370,59 +1369,107 @@ impl MCS51 {
             cpu.op_anl_c(MCS51_ADDRESSING::DIRECT(1), true);
             cpu.opcode_additional_work("ANL", 1, 2)
         };
-        self.dispatch[0xB1] = |cpu: &mut MCS51| {};
-        self.dispatch[0xB2] = |cpu: &mut MCS51| {};
-        self.dispatch[0xB3] = |cpu: &mut MCS51| {};
+        self.dispatch[0xB1] = |_cpu: &mut MCS51| {};
+        self.dispatch[0xB2] = |_cpu: &mut MCS51| {};
+        self.dispatch[0xB3] = |_cpu: &mut MCS51| {};
         self.dispatch[0xB4] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::ACCUMULATOR, MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::ACCUMULATOR,
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xB5] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::ACCUMULATOR, MCS51_ADDRESSING::DIRECT(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::ACCUMULATOR,
+                MCS51_ADDRESSING::DIRECT(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xB6] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::INDIRECT_Ri(0), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::INDIRECT_Ri(0),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xB7] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::INDIRECT_Ri(1), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::INDIRECT_Ri(1),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xB8] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(0), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(0),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xB9] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(1), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(1),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xBA] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(2), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(2),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xBB] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(3), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(3),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xBC] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(4), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(4),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xBD] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(5), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(5),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xBE] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(6), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(6),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
         self.dispatch[0xBF] = |cpu: &mut MCS51| {
-            cpu.op_cjne(MCS51_ADDRESSING::REGISTER(7), MCS51_ADDRESSING::DATA(1), MCS51_ADDRESSING::DATA(2));
+            cpu.op_cjne(
+                MCS51_ADDRESSING::REGISTER(7),
+                MCS51_ADDRESSING::DATA(1),
+                MCS51_ADDRESSING::DATA(2),
+            );
             cpu.opcode_additional_work("CJNE", 2, 0)
         };
-        self.dispatch[0xC0] = |cpu: &mut MCS51| {};
-        self.dispatch[0xC1] = |cpu: &mut MCS51| {};
+        self.dispatch[0xC0] = |_cpu: &mut MCS51| {};
+        self.dispatch[0xC1] = |_cpu: &mut MCS51| {};
         self.dispatch[0xC2] = |cpu: &mut MCS51| {
             cpu.op_clr(MCS51_ADDRESSING::DATA(1));
             cpu.opcode_additional_work("CLR", 2, 2)
@@ -1479,8 +1526,8 @@ impl MCS51 {
             cpu.op_xch(MCS51_ADDRESSING::REGISTER(7));
             cpu.opcode_additional_work("XCH", 1, 1)
         };
-        self.dispatch[0xD0] = |cpu: &mut MCS51| {};
-        self.dispatch[0xD1] = |cpu: &mut MCS51| {};
+        self.dispatch[0xD0] = |_cpu: &mut MCS51| {};
+        self.dispatch[0xD1] = |_cpu: &mut MCS51| {};
         self.dispatch[0xD2] = |cpu: &mut MCS51| {
             cpu.op_setb(MCS51_ADDRESSING::DATA(1));
             cpu.opcode_additional_work("SETB", 2, 1)
@@ -1489,13 +1536,13 @@ impl MCS51 {
             cpu.set_carry_flag(true);
             cpu.opcode_additional_work("SETB", 1, 1)
         };
-        self.dispatch[0xD4] = |cpu: &mut MCS51| {};
+        self.dispatch[0xD4] = |_cpu: &mut MCS51| {};
         self.dispatch[0xD5] = |cpu: &mut MCS51| {
             cpu.op_djnz(MCS51_ADDRESSING::DIRECT(1), MCS51_ADDRESSING::DATA(2), 3);
             cpu.opcode_additional_work("DJNZ", 2, 0)
         };
-        self.dispatch[0xD6] = |cpu: &mut MCS51| {};
-        self.dispatch[0xD7] = |cpu: &mut MCS51| {};
+        self.dispatch[0xD6] = |_cpu: &mut MCS51| {};
+        self.dispatch[0xD7] = |_cpu: &mut MCS51| {};
         self.dispatch[0xD8] = |cpu: &mut MCS51| {
             cpu.op_djnz(MCS51_ADDRESSING::REGISTER(0), MCS51_ADDRESSING::DATA(1), 2);
             cpu.opcode_additional_work("DJNZ", 2, 0)
@@ -1531,7 +1578,7 @@ impl MCS51 {
         self.dispatch[0xE0] = |cpu: &mut MCS51| {
             cpu.opcode_additional_work("MOVX A, @DPTR", 2, 1);
         };
-        self.dispatch[0xE1] = |cpu: &mut MCS51| {};
+        self.dispatch[0xE1] = |_cpu: &mut MCS51| {};
         self.dispatch[0xE2] = |cpu: &mut MCS51| {
             cpu.opcode_additional_work("MOVX A, @R0", 2, 1);
         };
@@ -1547,11 +1594,17 @@ impl MCS51 {
             cpu.opcode_additional_work("MOV", 1, 2)
         };
         self.dispatch[0xE6] = |cpu: &mut MCS51| {
-            cpu.op_mov(MCS51_ADDRESSING::ACCUMULATOR, MCS51_ADDRESSING::INDIRECT_Ri(0));
+            cpu.op_mov(
+                MCS51_ADDRESSING::ACCUMULATOR,
+                MCS51_ADDRESSING::INDIRECT_Ri(0),
+            );
             cpu.opcode_additional_work("MOV", 1, 1)
         };
         self.dispatch[0xE7] = |cpu: &mut MCS51| {
-            cpu.op_mov(MCS51_ADDRESSING::ACCUMULATOR, MCS51_ADDRESSING::INDIRECT_Ri(1));
+            cpu.op_mov(
+                MCS51_ADDRESSING::ACCUMULATOR,
+                MCS51_ADDRESSING::INDIRECT_Ri(1),
+            );
             cpu.opcode_additional_work("MOV", 1, 1)
         };
         self.dispatch[0xE8] = |cpu: &mut MCS51| {
@@ -1589,9 +1642,7 @@ impl MCS51 {
         self.dispatch[0xF0] = |cpu: &mut MCS51| {
             cpu.opcode_additional_work("MOVX @DPTR, A", 2, 1);
         };
-        self.dispatch[0xF1] = |cpu: &mut MCS51| {
-            
-        };
+        self.dispatch[0xF1] = |_cpu: &mut MCS51| {};
         self.dispatch[0xF2] = |cpu: &mut MCS51| {
             cpu.opcode_additional_work("MOVX @R0, A", 2, 1);
         };
@@ -1607,11 +1658,17 @@ impl MCS51 {
             cpu.opcode_additional_work("MOV", 0, 2);
         };
         self.dispatch[0xF6] = |cpu: &mut MCS51| {
-            cpu.op_mov(MCS51_ADDRESSING::INDIRECT_Ri(0), MCS51_ADDRESSING::ACCUMULATOR);
+            cpu.op_mov(
+                MCS51_ADDRESSING::INDIRECT_Ri(0),
+                MCS51_ADDRESSING::ACCUMULATOR,
+            );
             cpu.opcode_additional_work("MOV", 0, 1);
         };
         self.dispatch[0xF7] = |cpu: &mut MCS51| {
-            cpu.op_mov(MCS51_ADDRESSING::INDIRECT_Ri(1), MCS51_ADDRESSING::ACCUMULATOR);
+            cpu.op_mov(
+                MCS51_ADDRESSING::INDIRECT_Ri(1),
+                MCS51_ADDRESSING::ACCUMULATOR,
+            );
             cpu.opcode_additional_work("MOV", 0, 1);
         };
         self.dispatch[0xF8] = |cpu: &mut MCS51| {
@@ -1673,7 +1730,7 @@ impl MCS51 {
 
     pub fn op_setb(&mut self, addr: MCS51_ADDRESSING) {
         let bit_addr = self.get_u8(addr).unwrap();
-        self.write_bit(bit_addr, true); 
+        self.write_bit(bit_addr, true);
     }
 
     /*
@@ -1694,8 +1751,8 @@ impl MCS51 {
     /*
     Complement Accumulator
 
-    Each bit of the Accumulator is logically complemented (one's complement). 
-    Bits which previously contained a one are changed to a zero and vice-versa. 
+    Each bit of the Accumulator is logically complemented (one's complement).
+    Bits which previously contained a one are changed to a zero and vice-versa.
     No flags are affected
     */
 
@@ -1720,11 +1777,11 @@ impl MCS51 {
     }
 
     pub fn op_movx_a_ri(&mut self, reg: u8) {
-        let src_addr = self.get_u8(MCS51_ADDRESSING::REGISTER(reg));
+        let _src_addr = self.get_u8(MCS51_ADDRESSING::REGISTER(reg));
     }
 
     pub fn op_movx_ri_a(&mut self, reg: u8) {
-        let dest_addr = self.get_u8(MCS51_ADDRESSING::REGISTER(reg));
+        let _dest_addr = self.get_u8(MCS51_ADDRESSING::REGISTER(reg));
     }
 
     /*
@@ -1745,9 +1802,8 @@ impl MCS51 {
     pub fn op_djnz(&mut self, addr: MCS51_ADDRESSING, rel: MCS51_ADDRESSING, pc_offset: u16) {
         let val = self.get_u8(addr).unwrap().wrapping_sub(1);
         self.set_u8(addr, val);
-        self.pc = self.pc + pc_offset;
-        
-        
+        self.pc += pc_offset;
+
         if val != 0 {
             let rel_val = self.get_i8(rel).unwrap();
             self.write_pc_reli(rel_val as i16);
@@ -1758,10 +1814,15 @@ impl MCS51 {
         self.write_bit(self.get_u8(bit_addr).unwrap(), false);
     }
 
-    pub fn op_cjne(&mut self, dest: MCS51_ADDRESSING, src: MCS51_ADDRESSING, rel: MCS51_ADDRESSING) {
+    pub fn op_cjne(
+        &mut self,
+        dest: MCS51_ADDRESSING,
+        src: MCS51_ADDRESSING,
+        rel: MCS51_ADDRESSING,
+    ) {
         let dest_data = self.get_u8(dest).unwrap();
         let src_data = self.get_u8(src).unwrap();
-        self.pc = self.pc + 3;
+        self.pc += 3;
 
         if dest_data != src_data {
             let code = self.get_i8(rel).unwrap();
@@ -1881,7 +1942,7 @@ impl MCS51 {
     pub fn op_jnz(&mut self, code_addr: MCS51_ADDRESSING) {
         let acc = self.get_accumulator();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc = self.pc + 2;
+        self.pc += 2;
 
         if acc != 0 {
             self.write_pc_reli(code as i16);
@@ -1891,7 +1952,7 @@ impl MCS51 {
     pub fn op_jz(&mut self, code_addr: MCS51_ADDRESSING) {
         let acc = self.get_accumulator();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc = self.pc + 2;
+        self.pc += 2;
 
         if acc == 0 {
             self.write_pc_reli(code as i16);
@@ -1901,7 +1962,7 @@ impl MCS51 {
     pub fn op_jnc(&mut self, code_addr: MCS51_ADDRESSING) {
         let cf = self.get_carry_flag();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc = self.pc + 2;
+        self.pc += 2;
 
         if !cf {
             self.write_pc_reli(code as i16);
@@ -1913,9 +1974,9 @@ impl MCS51 {
         let mut cf = self.get_carry_flag();
 
         if complement {
-            cf = cf & !bit;
+            cf &= !bit;
         } else {
-            cf = cf & bit;
+            cf &= bit;
         }
 
         self.set_carry_flag(cf);
@@ -1944,9 +2005,9 @@ impl MCS51 {
         let mut cf = self.get_carry_flag();
 
         if complement {
-            cf = cf | !bit;
+            cf |= !bit;
         } else {
-            cf = cf | bit;
+            cf |= bit;
         }
 
         self.set_carry_flag(cf);
@@ -1964,7 +2025,7 @@ impl MCS51 {
     pub fn op_jc(&mut self, code_addr: MCS51_ADDRESSING) {
         let cf = self.get_carry_flag();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc = self.pc + 2;
+        self.pc += 2;
 
         if cf {
             self.write_pc_reli(code as i16);
@@ -2043,18 +2104,18 @@ impl MCS51 {
 
     pub fn op_lcall(&mut self, addr16: MCS51_ADDRESSING) {
         let new_pc = self.get_u16(addr16).unwrap();
-        self.pc = self.pc + 3;
+        self.pc += 3;
         self.push_stack((self.pc & 0xFF) as u8);
         self.push_stack(((self.pc >> 8) & 0xFF) as u8);
         self.pc = new_pc;
     }
 
     pub fn op_jbc(&mut self, bit_addr: MCS51_ADDRESSING, code_addr: MCS51_ADDRESSING) {
-        self.pc = self.pc + 3;
+        self.pc += 3;
         let bit_address = self.get_u8(bit_addr).unwrap();
 
         let bit: bool = self.read_bit(bit_address);
-            
+
         if bit {
             self.write_bit(bit_address, false);
             let rel = self.get_i8(code_addr).unwrap();
@@ -2063,11 +2124,11 @@ impl MCS51 {
     }
 
     pub fn op_jnb(&mut self, bit_addr: MCS51_ADDRESSING, code_addr: MCS51_ADDRESSING) {
-        self.pc = self.pc + 3;
+        self.pc += 3;
         let bit_address = self.get_u8(bit_addr).unwrap();
 
         let bit: bool = self.read_bit(bit_address);
-        
+
         if !bit {
             let rel = self.get_i8(code_addr).unwrap();
             self.write_pc_reli(rel as i16);
@@ -2075,11 +2136,11 @@ impl MCS51 {
     }
 
     pub fn op_jb(&mut self, bit_addr: MCS51_ADDRESSING, code_addr: MCS51_ADDRESSING) {
-        self.pc = self.pc + 3;
+        self.pc += 3;
         let bit_address = self.get_u8(bit_addr).unwrap();
 
         let bit: bool = self.read_bit(bit_address);
-        
+
         if bit {
             let rel = self.get_i8(code_addr).unwrap();
             self.write_pc_reli(rel as i16);
@@ -2128,7 +2189,7 @@ impl MCS51 {
         let acc = self.get_accumulator();
         let overflow = acc & 0x80 != 0;
         let carry = self.get_carry_flag();
-        self.set_accumulator(acc << 1 + carry as u8);
+        self.set_accumulator(acc << (1 + carry as u8));
         self.set_carry_flag(overflow);
     }
 
@@ -2139,11 +2200,17 @@ impl MCS51 {
 
     pub fn op_sjmp(&mut self, addr: MCS51_ADDRESSING) {
         let addr_rel = self.get_i8(addr).unwrap();
-        self.pc = self.pc + 2;
+        self.pc += 2;
         self.write_pc_reli(addr_rel as i16);
     }
 
     pub fn op_nop(&mut self) {}
+}
+
+impl Default for MCS51 {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /*
@@ -2168,13 +2235,21 @@ impl MCU<u8> for MCS51 {
     }
 
     fn next_instruction(&mut self) {
-        let opcode = self.program[self.pc as usize];
+        let Some(opcode) = self.program.get(self.pc as usize).copied() else {
+            println!(
+                "Error: Out of Program Mem: PC {:04x} MEM: {:04x}",
+                self.pc,
+                self.program.len()
+            );
+            return;
+        };
         self.op_pc = self.pc;
         self.run_opcode(opcode);
     }
 
     fn run_opcode(&mut self, opcode: u8) {
-        self.opcode_dispatch_table(opcode as u8)
+        println!("Opcode {opcode:02x}");
+        self.opcode_dispatch_table(opcode)
     }
 
     fn set_program(&mut self, program: Vec<u8>) {
