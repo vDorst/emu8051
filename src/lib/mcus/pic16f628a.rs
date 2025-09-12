@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub enum PIC16F628A_INSTRUCTION {
     ADDWF { f: u8, d: bool },
     ANDWF { f: u8, d: bool },
@@ -238,7 +240,6 @@ impl PIC16F628A {
         } else {
             self.pc_write(pc.wrapping_add(offset as u16));
         }
-        
     }
 
     pub fn pc_write(&mut self, value: u16) {
@@ -454,7 +455,7 @@ impl PIC16F628A {
                 _ => None,
             },
 
-            _ => None
+            _ => None,
         }
     }
 
@@ -538,9 +539,7 @@ impl PIC16F628A {
                 _ => None,
             },
 
-            _ => {
-                None
-            }
+            _ => None,
         }
     }
 
@@ -553,7 +552,7 @@ impl PIC16F628A {
         *self.get_memory_address(address).unwrap()
     }
 
-    /* 
+    /*
     Pops the top value of the stack and decrements the stack pointer.
     If the stack pointer is about to overflow, set it to 7, as the stack is 8 levels deep.
     */
@@ -608,11 +607,7 @@ impl PIC16F628A {
                         // Byte oriented
                         let code = ((opcode & 0xF00) >> 8) as u8;
                         let f: u8 = (opcode & 0x7F) as u8;
-                        let d = if code < 2 {
-                            (opcode & 0x80) > 0
-                        } else {
-                            false
-                        };
+                        let d = if code < 2 { (opcode & 0x80) > 0 } else { false };
 
                         match code {
                             0x00 => self.op_movwf(f),
@@ -655,7 +650,7 @@ impl PIC16F628A {
                         match opcode >> 11 & 0x7 {
                             0b100 => self.op_call(opcode & 0x7FF),
                             0b101 => self.op_goto(opcode & 0x7FF),
-                            _ => println!("Unused OPCODE {}", opcode)
+                            _ => println!("Unused OPCODE {}", opcode),
                         }
                     }
 
@@ -727,7 +722,6 @@ impl PIC16F628A {
         } else {
             self.w = data;
         }
-        
     }
 
     fn op_decf(&mut self, f: u8, d: bool) {
@@ -747,7 +741,7 @@ impl PIC16F628A {
         let mut data = self.read(f);
 
         data = data.wrapping_sub(1);
-        
+
         if data == 0 {
             self.additional_pc += 1;
             self.additional_cycles += 1;
@@ -779,7 +773,7 @@ impl PIC16F628A {
         let mut data = self.read(f);
 
         data = data.wrapping_add(1);
-        
+
         if data == 0 {
             self.additional_pc += 1;
             self.additional_cycles += 1;
@@ -950,7 +944,8 @@ impl PIC16F628A {
         let stack_pc = self.pc + 1;
         self.push_stack(stack_pc);
 
-        let pclath_bits = ((self.read_register(PIC16F628A_REGISTERS::PCLATH) & 0b11000) as u16) << 10;
+        let pclath_bits =
+            ((self.read_register(PIC16F628A_REGISTERS::PCLATH) & 0b11000) as u16) << 10;
         self.pc = k + pclath_bits;
     }
 

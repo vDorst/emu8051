@@ -6,6 +6,7 @@ use std::fs;
 #[derive(Debug, Clone)]
 pub struct MCS51_Decompiler_Instruction {
     address: u16,
+    #[allow(dead_code)]
     instruction: Vec<u16>,
     code: String,
     pub next: Vec<u16>,
@@ -118,7 +119,6 @@ impl MCS51_Decompiler {
                 } else {
                     println!("PC address {} out of bounds {}", addr, self.program.len());
                 }
-                
             }
         }
 
@@ -165,39 +165,38 @@ impl MCS51_Decompiler {
             0x90..=0x97 => format!("P1.{}", bit_offset),
             0x98..=0x9F => format!("SCON.{}", bit_offset),
             0xA0..=0xA7 => format!("P2.{}", bit_offset),
-            0xA8=> "IE.EX0".to_string(),
-            0xA9=> "IE.ET0".to_string(),
-            0xAA=> "IE.EX1".to_string(),
-            0xAB=> "IE.ET1".to_string(),
-            0xAC=> "IE.ES".to_string(),
-            0xAD=> "IE.ET2".to_string(),
-            0xAE=> "IE.6".to_string(),
-            0xAF=> "IE.EA".to_string(),
+            0xA8 => "IE.EX0".to_string(),
+            0xA9 => "IE.ET0".to_string(),
+            0xAA => "IE.EX1".to_string(),
+            0xAB => "IE.ET1".to_string(),
+            0xAC => "IE.ES".to_string(),
+            0xAD => "IE.ET2".to_string(),
+            0xAE => "IE.6".to_string(),
+            0xAF => "IE.EA".to_string(),
             0xB0..=0xB7 => format!("P3.{}", bit_offset),
-            0xB8=> "IP.PX0".to_string(),
-            0xB9=> "IP.PT0".to_string(),
-            0xBA=> "IP.PX1".to_string(),
-            0xBB=> "IP.PT1".to_string(),
-            0xBC=> "IP.PS".to_string(),
-            0xBD=> "IP.PT2".to_string(),
-            0xBE=> "IP.6".to_string(),
-            0xBF=> "IP.7".to_string(),
+            0xB8 => "IP.PX0".to_string(),
+            0xB9 => "IP.PT0".to_string(),
+            0xBA => "IP.PX1".to_string(),
+            0xBB => "IP.PT1".to_string(),
+            0xBC => "IP.PS".to_string(),
+            0xBD => "IP.PT2".to_string(),
+            0xBE => "IP.6".to_string(),
+            0xBF => "IP.7".to_string(),
             0xC8..=0xCF => format!("T2CON.{}", bit_offset),
-            0xD0=> "PSW.P".to_string(),
-            0xD1=> "PSW.1".to_string(),
-            0xD2=> "PSW.OV".to_string(),
-            0xD3=> "PSW.RS0".to_string(),
-            0xD4=> "PSW.RS1".to_string(),
-            0xD5=> "PSW.F0".to_string(),
-            0xD6=> "PSW.AC".to_string(),
-            0xD7=> "PSW.CY".to_string(),
+            0xD0 => "PSW.P".to_string(),
+            0xD1 => "PSW.1".to_string(),
+            0xD2 => "PSW.OV".to_string(),
+            0xD3 => "PSW.RS0".to_string(),
+            0xD4 => "PSW.RS1".to_string(),
+            0xD5 => "PSW.F0".to_string(),
+            0xD6 => "PSW.AC".to_string(),
+            0xD7 => "PSW.CY".to_string(),
             0xE0..=0xE7 => format!("ACC.{}", bit_offset),
             0xF0..=0xF7 => format!("B.{}", bit_offset),
             _ => format!("{:02x}", address),
         }
     }
 
-    
     pub fn bit_address_name_num(address: u8) -> String {
         let bit_offset = address & 0x07;
         match address {
@@ -327,11 +326,7 @@ impl MCS51_Decompiler {
             }
 
             0x04 => {
-                return self.one_byte_instruction(
-                    address,
-                    opcode,
-                    "INC A",
-                );
+                return self.one_byte_instruction(address, opcode, "INC A");
             }
 
             0x05 => {
@@ -575,7 +570,7 @@ impl MCS51_Decompiler {
                     instruction: vec![opcode as u16],
                     code: "JMP @A+DPTR".to_string(),
                     next: vec![],
-                }
+                };
             }
 
             0x75 => {

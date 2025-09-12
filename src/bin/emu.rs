@@ -6,6 +6,7 @@ use crossterm::{
 };
 use futures::{FutureExt, StreamExt as _};
 use log::{LevelFilter, error, info};
+use microchip_rs::{mcus::rtl837x::DW8051_RTL837x, traits::component::MCU};
 use ratatui::{
     Terminal,
     crossterm::{
@@ -21,6 +22,7 @@ use ratatui::{
 use tokio::{
     select,
     sync::mpsc::{self, Receiver, Sender},
+    task::yield_now,
 };
 use tui_logger::TuiLoggerWidget;
 
@@ -157,10 +159,25 @@ async fn main_loop<T: Backend>(
     Ok(())
 }
 
-async fn serial_tasks() {
+struct SimSettings {
+    uart: Option<(Sender<u8>, Receiver<u8>)>,
+}
+
+async fn simulator_tasks(settings: SimSettings) {
+    let mut mcu = DW8051_RTL837x::new();
+    mcu.setup();
+
+    mcu.debug = false;
+
+    mcu.ext_uart_0 = settings.uart;
+
+    let prg = include_bytes!("../../data/rtlinstall.bin");
+
+    mcu.set_program(prg.to_vec());
+
     loop {
-        // info!("This is an info log message.");
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        mcu.next_instruction();
+        yield_now().await
     }
 }
 
@@ -184,14 +201,19 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
     // Initialize logger
     tui_logger::init_logger(LevelFilter::Info).unwrap();
 
-    let sid = tokio::spawn(serial_tasks());
-
     let (tx_send, tx_recv) = mpsc::channel(32);
+    let (rx_send, rx_recv) = mpsc::channel(32);
+
+    let app_cfg = SimSettings {
+        uart: Some((rx_send, tx_recv)),
+    };
+
+    let sid = tokio::spawn(simulator_tasks(app_cfg));
 
     let mut app = AppState {
         selected_win: Win::default(),
         serial_tx: tx_send,
-        serial_rx: tx_recv,
+        serial_rx: rx_recv,
     };
 
     let ret = main_loop(&mut terminal, &mut app).await;

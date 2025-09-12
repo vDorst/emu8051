@@ -1,6 +1,6 @@
 use std::ops::Neg;
 
-use log::{debug, error};
+use log::{debug, error, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::traits::component::MCU;
@@ -136,14 +136,14 @@ impl DW8051_RTL837x {
 
     pub fn write_sfr(&mut self, register: MCS51_REGISTERS, value: u8) {
         if register == MCS51_REGISTERS::SBUF {
-            println!("SBUF = {value}");
+            trace!("SBUF = {value}");
         }
         self.special_function_registers[register as usize] = value;
     }
 
     pub fn write_sfr_rel(&mut self, register: MCS51_REGISTERS, value: u8, sub: bool) {
         if register == MCS51_REGISTERS::SBUF {
-            println!("SBUF = {value}");
+            trace!("SBUF = {value}");
         }
         if sub {
             self.special_function_registers[register as usize] =
@@ -178,7 +178,7 @@ impl DW8051_RTL837x {
 
     pub fn get_register_mut(&mut self, register: u8) -> Option<&mut u8> {
         if register == 99 {
-            println!("SBUS");
+            trace!("SBUS");
         }
         let bank = self.get_current_register_bank_flags();
         self.ram.get_mut(register as usize + bank as usize)
@@ -193,15 +193,23 @@ impl DW8051_RTL837x {
         let bank = self.get_current_register_bank_flags();
 
         if register == 99 {
-            println!("SBUS = {value}");
+            trace!("SBUS = {value}");
         }
 
         self.ram[register as usize + bank as usize] = value;
     }
 
     pub fn read_code_byte(&mut self, addr: usize) -> u8 {
-        let op = self.program[addr];
-        print!("{op:02x}");
+        let Some(op) = self.program.get(addr).copied() else {
+            self.cpu_dump();
+            panic!(
+                "ADDR: 0x{:04x} PC: 0x{:04x} MEM: 0x{:04x}",
+                addr,
+                self.pc,
+                self.program.len()
+            );
+        };
+        trace!("{op:02x}");
         op
     }
 
@@ -228,13 +236,13 @@ impl DW8051_RTL837x {
 
         // println!("W-BIT {:0x} {:0x} {value}", address, addr);
 
-        let bit = address & 0x7;
+        let bit = 1_u8 << (address & 0x7);
         let mut src = *self.read(addr).unwrap();
 
         if value {
-            src |= (value as u8) << bit;
+            src |= bit;
         } else {
-            src &= ((!value) as u8) << bit;
+            src &= !bit;
         }
 
         self.write(addr, src);
@@ -478,6 +486,7 @@ impl DW8051_RTL837x {
     }
 
     pub fn write(&mut self, address: u8, value: u8) {
+        // trace!("## WRITE: A {address:04x} = {value:02x}");
         match address {
             0x00..=0x7F => self.ram[address as usize] = value,
             0x80 => {
@@ -494,12 +503,17 @@ impl DW8051_RTL837x {
             0x8C => self.special_function_registers[MCS51_REGISTERS::TH0 as usize] = value,
             0x8D => self.special_function_registers[MCS51_REGISTERS::TH1 as usize] = value,
             0x90 => self.special_function_registers[MCS51_REGISTERS::P1 as usize] = value,
-            0x98 => self.special_function_registers[MCS51_REGISTERS::SCON as usize] = value,
+            0x98 => {
+                trace!("\t\t ## SCON = {value:02x}");
+                self.special_function_registers[MCS51_REGISTERS::SCON as usize] = value;
+            }
             0x99 => {
-                println!("SBUF = {value}");
+                trace!("\t\t ## SBUF = {value:02x}");
                 if let Some((tx, _)) = &mut self.ext_uart_0 {
-                    tx.try_send(value).is_ok();
+                    tx.try_send(value).expect("Not to fail");
                 }
+                // Always set TI bit.
+                self.write_bit(0x99, true);
             }
             0xA0 => self.special_function_registers[MCS51_REGISTERS::SFR_EXEC_GO as usize] = value,
             0xA8 => self.special_function_registers[MCS51_REGISTERS::IE as usize] = value,
@@ -522,7 +536,7 @@ impl DW8051_RTL837x {
         self.write_sfr(MCS51_REGISTERS::DPL1, value as u8);
     }
 
-    pub fn get_dptr(&mut self) -> u16 {
+    pub fn get_dptr(&self) -> u16 {
         let dph = self.read_sfr(MCS51_REGISTERS::DPH1);
         let dpl = self.read_sfr(MCS51_REGISTERS::DPL1);
 
@@ -632,7 +646,7 @@ impl DW8051_RTL837x {
             }
             MCS51_ADDRESSING::INDIRECT_Ri(reg) => self.write(self.read_register(reg), value),
             _ => {
-                println!("Unsupported addressing mode");
+                error!("Unsupported addressing mode");
             }
         }
     }
@@ -648,7 +662,7 @@ impl DW8051_RTL837x {
             }
             MCS51_ADDRESSING::INDIRECT_Ri(reg) => self.get_mut_addr(self.read_register(reg)),
             _ => {
-                println!("Unsupported addressing mode");
+                error!("Unsupported addressing mode");
                 None
             }
         }
@@ -668,7 +682,7 @@ impl DW8051_RTL837x {
                 Some(self.program[self.op_pc as usize + offset as usize])
             }
             _ => {
-                println!("Unsupported addressing mode");
+                error!("Unsupported addressing mode");
                 None
             }
         }
@@ -683,7 +697,7 @@ impl DW8051_RTL837x {
                 ]))
             }
             _ => {
-                println!("Unsupported addressing mode");
+                error!("Unsupported addressing mode");
                 None
             }
         }
@@ -708,7 +722,7 @@ impl DW8051_RTL837x {
                 Some(dat)
             }
             _ => {
-                println!("Unsupported addressing mode");
+                error!("Unsupported addressing mode");
                 None
             }
         }
@@ -742,7 +756,6 @@ impl DW8051_RTL837x {
             cpu.opcode_additional_work("RR", 0, 1);
         };
         self.dispatch[0x04] = |cpu: &mut DW8051_RTL837x| {
-            println!("Acc");
             cpu.op_inc(MCS51_ADDRESSING::ACCUMULATOR);
             cpu.opcode_additional_work("INC", 0, 1);
         };
@@ -1569,7 +1582,7 @@ impl DW8051_RTL837x {
         };
         self.dispatch[0xC1] = |_cpu: &mut DW8051_RTL837x| {};
         self.dispatch[0xC2] = |cpu: &mut DW8051_RTL837x| {
-            cpu.op_clr(MCS51_ADDRESSING::DATA(1));
+            cpu.op_clrb(MCS51_ADDRESSING::DATA(1));
             cpu.opcode_additional_work("CLR", 2, 2)
         };
         self.dispatch[0xC3] = |cpu: &mut DW8051_RTL837x| {
@@ -1688,7 +1701,7 @@ impl DW8051_RTL837x {
             cpu.opcode_additional_work("MOVX A, @R1", 2, 1);
         };
         self.dispatch[0xE4] = |cpu: &mut DW8051_RTL837x| {
-            cpu.op_clr(MCS51_ADDRESSING::ACCUMULATOR);
+            cpu.set_accumulator(0x00);
             cpu.opcode_additional_work("CLR A", 1, 1)
         };
         self.dispatch[0xE5] = |cpu: &mut DW8051_RTL837x| {
@@ -1744,7 +1757,7 @@ impl DW8051_RTL837x {
         self.dispatch[0xF0] = |cpu: &mut DW8051_RTL837x| {
             cpu.opcode_additional_work("MOVX @DPTR, A", 2, 1);
         };
-        self.dispatch[0xF1] = |_cpu: &mut DW8051_RTL837x| println!("DP: 0xF1");
+        self.dispatch[0xF1] = |_cpu: &mut DW8051_RTL837x| warn!("DP: 0xF1");
         self.dispatch[0xF2] = |cpu: &mut DW8051_RTL837x| {
             cpu.opcode_additional_work("MOVX @R0, A", 2, 1);
         };
@@ -1819,7 +1832,7 @@ impl DW8051_RTL837x {
             self.additional_cycles = cycles
         }
         if self.debug {
-            println!("{:04x} : {}", self.pc, _label);
+            debug!("{:04x} : {}", self.pc, _label);
         }
     }
 
@@ -1883,7 +1896,7 @@ impl DW8051_RTL837x {
         {
             self.set_accumulator(val);
         } else {
-            println!("Error XDATA outside meme!")
+            error!("Error XDATA outside meme!")
         }
     }
 
@@ -1917,8 +1930,9 @@ impl DW8051_RTL837x {
         }
     }
 
-    pub fn op_clr(&mut self, bit_addr: MCS51_ADDRESSING) {
-        self.write_bit(self.get_u8(bit_addr).unwrap(), false);
+    pub fn op_clrb(&mut self, bit_addr: MCS51_ADDRESSING) {
+        let bit_addr = self.get_u8(bit_addr).unwrap();
+        self.write_bit(bit_addr, false);
     }
 
     pub fn op_cjne(
@@ -2229,7 +2243,7 @@ impl DW8051_RTL837x {
 
     pub fn op_lcall(&mut self, addr16: MCS51_ADDRESSING) {
         let new_pc = self.get_u16(addr16).unwrap();
-        println!("LCALL: {new_pc:04x}");
+        trace!("LCALL: {new_pc:04x}");
         self.pc += 3;
         self.push_stack((self.pc & 0xFF) as u8);
         self.push_stack(((self.pc >> 8) & 0xFF) as u8);
@@ -2325,9 +2339,9 @@ impl DW8051_RTL837x {
     }
 
     pub fn op_sjmp(&mut self, addr: MCS51_ADDRESSING) {
-        let addr_rel = self.get_i8(addr).unwrap();
+        let addr_rel = i16::from(self.get_i8(addr).unwrap());
         self.pc += 2;
-        self.write_pc_reli(addr_rel as i16);
+        self.write_pc_reli(addr_rel);
     }
 
     pub fn op_nop(&mut self) {}
@@ -2347,6 +2361,12 @@ impl DW8051_RTL837x {
 
     pub fn get_program_counter(&self) -> u16 {
         self.pc
+    }
+
+    pub fn cpu_dump(&self) {
+        println!("\t  PC = {:04x}", self.pc);
+        println!("\t   A = {:02x}", self.get_accumulator());
+        println!("\tDPTR = {:04x}", self.get_dptr());
     }
 }
 
@@ -2387,7 +2407,7 @@ impl MCU<u8> for DW8051_RTL837x {
             self.op_int();
         }
         let Some(opcode) = self.program.get(self.pc as usize).copied() else {
-            println!(
+            error!(
                 "Error: Out of Program Mem: PC {:04x} MEM: {:04x}",
                 self.pc,
                 self.program.len()
@@ -2396,7 +2416,7 @@ impl MCU<u8> for DW8051_RTL837x {
         };
         self.op_pc = self.pc;
 
-        println!("\t PC {:04x} {:02x}", self.pc, opcode);
+        // println!("\t PC {:04x} {:02x}", self.pc, opcode);
 
         self.run_opcode(opcode);
     }
@@ -2434,17 +2454,22 @@ impl MCU<u8> for DW8051_RTL837x {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc::{Receiver, Sender, channel};
+    use tokio::sync::mpsc::channel;
 
     #[test]
     fn serial_interrupt() {
+        let mut serial_console = Vec::<u8>::new();
+
         let mut mcu = DW8051_RTL837x::new();
         mcu.setup();
+
+        println!("RI: {}", mcu.read_bit(0xF0));
+        println!("TI: {}", mcu.read_bit(0xF1));
 
         mcu.debug = true;
 
         let (send_tx, mut recv_tx) = channel(32);
-        let (mut send_rx, recv_rx) = channel(32);
+        let (mut _send_rx, recv_rx) = channel(32);
 
         mcu.ext_uart_0 = Some((send_tx, recv_rx));
 
@@ -2465,15 +2490,93 @@ mod tests {
 
         assert_eq!(mcu.get_program_counter(), 0x1d3);
 
-        let mut char: Option<u8> = None;
-
-        for _ in 1..50 {
+        for _ in 1..1000 {
             mcu.next_instruction();
             if let Ok(val) = recv_tx.try_recv() {
-                char = Some(val);
-                break;
+                serial_console.push(val);
+                if val == b'\n' {
+                    break;
+                }
             }
         }
-        assert_eq!(char, Some(b'I'));
+
+        println!("RI: {}", mcu.read_bit(0x98));
+        println!("TI: {}", mcu.read_bit(0x99));
+
+        assert_eq!(
+            String::from_utf8_lossy(&serial_console),
+            "Image installer running\r\n"
+        );
+    }
+
+    #[test]
+    fn serial_interrupt_bits() {
+        let mut mcu = DW8051_RTL837x::new();
+        mcu.setup();
+
+        assert!(!mcu.read_bit(0x98));
+        assert!(!mcu.read_bit(0x99));
+    }
+
+    #[test]
+    fn sjump_test() {
+        let mut mcu = DW8051_RTL837x::new();
+        mcu.setup();
+
+        mcu.debug = true;
+
+        mcu.set_program(vec![0x80, 0x21]);
+
+        assert_eq!(mcu.pc, 0x0000);
+
+        mcu.next_instruction();
+
+        assert_eq!(mcu.pc, 0x0023);
+
+        mcu.set_program(vec![0x80, (-2_i8).cast_unsigned()]);
+        mcu.reset();
+
+        assert_eq!(mcu.pc, 0x0000);
+
+        mcu.next_instruction();
+
+        assert_eq!(mcu.pc, 0x0000);
+    }
+
+    #[test]
+    fn bits_test() {
+        let mut mcu = DW8051_RTL837x::new();
+        mcu.setup();
+
+        mcu.debug = true;
+
+        mcu.set_accumulator(0xFF);
+
+        assert_eq!(mcu.get_accumulator(), 0xFF);
+
+        mcu.set_program(vec![0xE4, 0xF4, 0xC4, 0xA4]);
+
+        assert_eq!(mcu.pc, 0x0000);
+
+        mcu.next_instruction();
+        assert_eq!(mcu.pc, 0x0001);
+        assert_eq!(mcu.get_accumulator(), 0x00);
+
+        mcu.set_accumulator(0x12);
+        mcu.next_instruction();
+        assert_eq!(mcu.pc, 0x0002);
+        assert_eq!(mcu.get_accumulator(), !0x12);
+
+        mcu.next_instruction();
+        assert_eq!(mcu.pc, 0x0003);
+        assert_eq!(mcu.get_accumulator(), !0x21);
+
+        println!("Hier");
+
+        mcu.set_accumulator(0x8);
+        mcu.write_sfr(MCS51_REGISTERS::B, 0x04);
+        mcu.next_instruction();
+        assert_eq!(mcu.pc, 0x0004);
+        assert_eq!(mcu.get_accumulator(), 32);
     }
 }

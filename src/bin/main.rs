@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(unused_imports)]
 use microchip_rs::decompiler::mcs51::*;
 use microchip_rs::mcus::mcs51::*;
 use microchip_rs::mcus::pic16f628a::*;
