@@ -1,1 +1,4 @@
 /target
+!tests/*/output/main.bin
+!tests/*/output/main.lst
+tests/*/output/*

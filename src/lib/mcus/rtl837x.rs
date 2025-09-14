@@ -1,6 +1,4 @@
-use std::ops::Neg;
-
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::traits::component::MCU;
@@ -53,6 +51,10 @@ pub enum MCS51_REGISTERS {
     SFR_FLASH_CMD_R,
     SFR_FLASH_CONFIG,
     SFR_FLASH_CMD,
+    CKCON,
+    SFR_97,
+    SFR_B9,
+    SFR_BA,
     REGISTER_COUNT,
 }
 
@@ -68,10 +70,36 @@ pub enum MCS51_ADDRESSING {
     RELATIVE,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum McuIrq {
+    Timer0,
+    Serial,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RunningMode {
+    /// In powersave Idle Mode
+    Idle,
+    /// Normal running code
+    Normal,
+    /// Executing Interrupt Routine
+    Irq(McuIrq),
+}
+
+impl RunningMode {
+    pub fn need_scan_irq(&self) -> bool {
+        !matches!(self, Self::Irq(_))
+    }
+    pub fn is_running(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+}
+
 pub struct DW8051_RTL837x {
     pub pc: u16,
     pub op_pc: u16,
-    pub interrupts: i16,
+    pub timer0: u16,
+    pub run_mode: RunningMode,
     program: Vec<u8>,
     pub special_function_registers: [u8; MCS51_REGISTERS::REGISTER_COUNT as usize],
     pub ram: [u8; 256],
@@ -79,6 +107,7 @@ pub struct DW8051_RTL837x {
     pub additional_cycles: u8,
     pub dispatch: [fn(&mut DW8051_RTL837x); 256],
     pub debug: bool,
+    pub steps: u32,
     pub ext_flash: Option<(Sender<u8>, Receiver<[u8; 4]>)>,
     pub ext_uart_0: Option<(Sender<u8>, Receiver<u8>)>,
     pub ext_asic: Option<(Sender<u8>, Receiver<[u8; 4]>)>,
@@ -90,7 +119,8 @@ impl DW8051_RTL837x {
         DW8051_RTL837x {
             pc: 0,
             op_pc: 0,
-            interrupts: 0,
+            timer0: 0,
+            run_mode: RunningMode::Normal,
             ram: [0; 256],
             program: vec![],
             special_function_registers: [0; MCS51_REGISTERS::REGISTER_COUNT as usize],
@@ -98,6 +128,7 @@ impl DW8051_RTL837x {
             dispatch: [|_cpu| {}; 256],
             debug: false,
             xdata: [0; _],
+            steps: 0,
             ext_flash: None,
             ext_uart_0: None,
             ext_asic: None,
@@ -135,23 +166,37 @@ impl DW8051_RTL837x {
     }
 
     pub fn write_sfr(&mut self, register: MCS51_REGISTERS, value: u8) {
-        if register == MCS51_REGISTERS::SBUF {
-            trace!("SBUF = {value}");
+        // Handle nom memory sfr
+        match register {
+            MCS51_REGISTERS::PCON => {
+                if value & 0x03 == 0x01 {
+                    debug!("Put Idle Mode");
+                    self.run_mode = RunningMode::Idle;
+                }
+            }
+            MCS51_REGISTERS::SBUF => {
+                trace!("write_sfr: SBUF = {value}");
+                // Always set TI bit.
+                self.write_bit(0x99, true);
+                if let Some((tx, _)) = &mut self.ext_uart_0 {
+                    tx.try_send(value).expect("Not to fail");
+                }
+                return;
+            }
+            _ => (),
         }
+
         self.special_function_registers[register as usize] = value;
     }
 
     pub fn write_sfr_rel(&mut self, register: MCS51_REGISTERS, value: u8, sub: bool) {
-        if register == MCS51_REGISTERS::SBUF {
-            trace!("SBUF = {value}");
-        }
-        if sub {
-            self.special_function_registers[register as usize] =
-                self.special_function_registers[register as usize].wrapping_sub(value);
+        let val = self.read_sfr(register);
+        let val = if sub {
+            val.wrapping_sub(value)
         } else {
-            self.special_function_registers[register as usize] =
-                self.special_function_registers[register as usize].wrapping_add(value);
+            val.wrapping_add(value)
         };
+        self.write_sfr(register, val);
     }
 
     pub fn write_pc_rel(&mut self, value: u16, sub: bool) {
@@ -186,14 +231,19 @@ impl DW8051_RTL837x {
 
     pub fn read_register(&self, register: u8) -> u8 {
         let bank = self.get_current_register_bank_flags();
+
+        if register == 0x99 {
+            debug!("read SBUS = ");
+        }
+
         self.ram[register as usize + bank as usize]
     }
 
     pub fn write_register(&mut self, register: u8, value: u8) {
         let bank = self.get_current_register_bank_flags();
 
-        if register == 99 {
-            trace!("SBUS = {value}");
+        if register == 0x99 {
+            debug!("SBUS = {value}");
         }
 
         self.ram[register as usize + bank as usize] = value;
@@ -211,6 +261,59 @@ impl DW8051_RTL837x {
         };
         trace!("{op:02x}");
         op
+    }
+
+    pub fn advance_pc(&mut self, cycle: u16) {
+        let mut tcon: u8 = self.read_sfr(MCS51_REGISTERS::TCON);
+        let mut tmod: u8 = self.read_sfr(MCS51_REGISTERS::TMOD);
+
+        for (tmr, (t_sfr_hi, t_sfr_lo)) in (0..=1).zip([
+            (MCS51_REGISTERS::TH0, MCS51_REGISTERS::TL0),
+            (MCS51_REGISTERS::TH1, MCS51_REGISTERS::TL1),
+        ]) {
+            // Handle only when timer is enabled!
+            if tcon & 0x10 != 0 {
+                let mut th = self.read_sfr(t_sfr_hi);
+                let mut tl = self.read_sfr(t_sfr_lo);
+
+                // info!("READ TMR{tmr}: {th:02x}{tl:02x}");
+
+                let mode = tmod & 0x3;
+                match mode {
+                    // Mode 0
+                    0b00 | 0b01 => {
+                        let tmr_val = u16::from_le_bytes([tl, th]);
+                        let mut tmr_new_val = tmr_val.wrapping_add(cycle + 2);
+                        if mode == 0b00 {
+                            error!("T{tmr}: 13-bit!");
+                            // 13-bit mode
+                            tmr_new_val &= 0x1FFF;
+                        }
+
+                        if tmr_new_val < tmr_val {
+                            // set overflow flag!
+                            let bit = if tmr == 0 { 5 } else { 7 };
+                            self.write_bit(bit + 0x88, true);
+                            debug!("T{tmr}: Set OF flag!")
+                        }
+                        let [lo, hi] = tmr_new_val.to_le_bytes();
+                        th = hi;
+                        tl = lo;
+                    }
+                    _ => error!("TIMER{tmr} mode {} not supported", tcon & 0x3),
+                }
+
+                // info!("SET  TMR{tmr}: {th:02x}{tl:02x}");
+
+                self.write_sfr(t_sfr_hi, th);
+                self.write_sfr(t_sfr_lo, tl);
+            }
+
+            tmod >>= 2;
+            tcon >>= 4;
+        }
+
+        self.pc += cycle;
     }
 
     /*
@@ -246,6 +349,10 @@ impl DW8051_RTL837x {
         }
 
         self.write(addr, src);
+
+        if address == 0x99 || address == 0xAF {
+            debug!("## write_bit() TI = {value} REG: {addr:02x} = {src:02x}");
+        }
     }
 
     pub fn read_raw(&self, address: u8) -> u8 {
@@ -350,12 +457,20 @@ impl DW8051_RTL837x {
             0x90 => self
                 .special_function_registers
                 .get_mut(MCS51_REGISTERS::P1 as usize),
-            0x98 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::SCON as usize),
-            0x99 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::SBUF as usize),
+            0x98 => {
+                let val = self
+                    .special_function_registers
+                    .get_mut(MCS51_REGISTERS::SCON as usize);
+                debug!("##get_mut_addr() SCON = {val:02x?}");
+
+                val
+            }
+            0x99 => {
+                debug!("##get_mut_addr() TI");
+
+                self.special_function_registers
+                    .get_mut(MCS51_REGISTERS::SBUF as usize)
+            }
             0xA0 => self
                 .special_function_registers
                 .get_mut(MCS51_REGISTERS::SFR_EXEC_GO as usize),
@@ -439,9 +554,17 @@ impl DW8051_RTL837x {
             0x90 => self
                 .special_function_registers
                 .get(MCS51_REGISTERS::P1 as usize),
-            0x98 => self
+            0x96 => self
                 .special_function_registers
-                .get(MCS51_REGISTERS::SCON as usize),
+                .get(MCS51_REGISTERS::PSBANK as usize),
+            0x98 => {
+                let val = self
+                    .special_function_registers
+                    .get(MCS51_REGISTERS::SCON as usize);
+                debug!("##read() SCON = {val:?}");
+
+                val
+            }
             0x99 => self
                 .special_function_registers
                 .get(MCS51_REGISTERS::SBUF as usize),
@@ -489,45 +612,44 @@ impl DW8051_RTL837x {
         // trace!("## WRITE: A {address:04x} = {value:02x}");
         match address {
             0x00..=0x7F => self.ram[address as usize] = value,
-            0x80 => {
-                self.special_function_registers[MCS51_REGISTERS::SFR_FLASH_EXEC as usize] = value
+            sfr => {
+                let sfr_reg: MCS51_REGISTERS = match sfr {
+                    0x80 => MCS51_REGISTERS::SFR_FLASH_EXEC,
+                    0x81 => MCS51_REGISTERS::SP,
+                    0x82 => MCS51_REGISTERS::DPL1,
+                    0x83 => MCS51_REGISTERS::DPH1,
+                    0x87 => MCS51_REGISTERS::PCON,
+                    0x88 => MCS51_REGISTERS::TCON,
+                    0x89 => MCS51_REGISTERS::TMOD,
+                    0x8A => MCS51_REGISTERS::TL0,
+                    0x8B => MCS51_REGISTERS::TL1,
+                    0x8C => MCS51_REGISTERS::TH0,
+                    0x8D => MCS51_REGISTERS::TH1,
+                    0x8E => MCS51_REGISTERS::CKCON,
+                    0x90 => MCS51_REGISTERS::P1,
+                    0x97 => MCS51_REGISTERS::SFR_97,
+                    0x98 => MCS51_REGISTERS::SCON,
+                    0x99 => MCS51_REGISTERS::SBUF,
+                    0xA0 => MCS51_REGISTERS::SFR_EXEC_GO,
+                    0xA8 => MCS51_REGISTERS::IE,
+                    0xB0 => MCS51_REGISTERS::P3,
+                    0xB8 => MCS51_REGISTERS::IP,
+                    0xB9 => MCS51_REGISTERS::SFR_B9,
+                    0xBA => MCS51_REGISTERS::SFR_BA,
+                    0xC8 => MCS51_REGISTERS::T2CON,
+                    0xCA => MCS51_REGISTERS::RCAP2L,
+                    0xCB => MCS51_REGISTERS::RCAP2H,
+                    0xCC => MCS51_REGISTERS::TL2,
+                    0xCD => MCS51_REGISTERS::TH2,
+                    0xD0 => MCS51_REGISTERS::PSW,
+                    0xE0 => MCS51_REGISTERS::ACC,
+                    0xF0 => MCS51_REGISTERS::B,
+                    0xE8 => MCS51_REGISTERS::EIE,
+                    _ => panic!("Unkown SFR {address:02x}"),
+                };
+
+                self.write_sfr(sfr_reg, value);
             }
-            0x81 => self.special_function_registers[MCS51_REGISTERS::SP as usize] = value,
-            0x82 => self.special_function_registers[MCS51_REGISTERS::DPL1 as usize] = value,
-            0x83 => self.special_function_registers[MCS51_REGISTERS::DPH1 as usize] = value,
-            0x87 => self.special_function_registers[MCS51_REGISTERS::PCON as usize] = value,
-            0x88 => self.special_function_registers[MCS51_REGISTERS::TCON as usize] = value,
-            0x89 => self.special_function_registers[MCS51_REGISTERS::TMOD as usize] = value,
-            0x8A => self.special_function_registers[MCS51_REGISTERS::TL0 as usize] = value,
-            0x8B => self.special_function_registers[MCS51_REGISTERS::TL1 as usize] = value,
-            0x8C => self.special_function_registers[MCS51_REGISTERS::TH0 as usize] = value,
-            0x8D => self.special_function_registers[MCS51_REGISTERS::TH1 as usize] = value,
-            0x90 => self.special_function_registers[MCS51_REGISTERS::P1 as usize] = value,
-            0x98 => {
-                trace!("\t\t ## SCON = {value:02x}");
-                self.special_function_registers[MCS51_REGISTERS::SCON as usize] = value;
-            }
-            0x99 => {
-                trace!("\t\t ## SBUF = {value:02x}");
-                if let Some((tx, _)) = &mut self.ext_uart_0 {
-                    tx.try_send(value).expect("Not to fail");
-                }
-                // Always set TI bit.
-                self.write_bit(0x99, true);
-            }
-            0xA0 => self.special_function_registers[MCS51_REGISTERS::SFR_EXEC_GO as usize] = value,
-            0xA8 => self.special_function_registers[MCS51_REGISTERS::IE as usize] = value,
-            0xB0 => self.special_function_registers[MCS51_REGISTERS::P3 as usize] = value,
-            0xB8 => self.special_function_registers[MCS51_REGISTERS::IP as usize] = value,
-            0xC8 => self.special_function_registers[MCS51_REGISTERS::T2CON as usize] = value,
-            0xCA => self.special_function_registers[MCS51_REGISTERS::RCAP2L as usize] = value,
-            0xCB => self.special_function_registers[MCS51_REGISTERS::RCAP2H as usize] = value,
-            0xCC => self.special_function_registers[MCS51_REGISTERS::TL2 as usize] = value,
-            0xCD => self.special_function_registers[MCS51_REGISTERS::TH2 as usize] = value,
-            0xD0 => self.special_function_registers[MCS51_REGISTERS::PSW as usize] = value,
-            0xE0 => self.special_function_registers[MCS51_REGISTERS::ACC as usize] = value,
-            0xF0 => self.special_function_registers[MCS51_REGISTERS::B as usize] = value,
-            _ => (),
         }
     }
 
@@ -587,7 +709,7 @@ impl DW8051_RTL837x {
     }
 
     pub fn set_accumulator(&mut self, value: u8) {
-        self.special_function_registers[MCS51_REGISTERS::ACC as usize] = value;
+        self.write_sfr(MCS51_REGISTERS::ACC, value);
     }
 
     pub fn reset_registers(&mut self) {
@@ -634,6 +756,9 @@ impl DW8051_RTL837x {
         }
 
         let opcode = self.program[self.pc as usize];
+
+        debug!("\t{:04x} : {:02x}", self.pc, opcode);
+
         self.opcode_dispatch_table(opcode);
     }
 
@@ -1290,7 +1415,7 @@ impl DW8051_RTL837x {
             cpu.opcode_additional_work("DIV", 3, 1);
         };
         self.dispatch[0x85] = |cpu: &mut DW8051_RTL837x| {
-            cpu.op_mov(MCS51_ADDRESSING::DIRECT(1), MCS51_ADDRESSING::DIRECT(2));
+            cpu.op_mov(MCS51_ADDRESSING::DIRECT(2), MCS51_ADDRESSING::DIRECT(1));
             cpu.opcode_additional_work("MOV", 1, 3);
         };
         self.dispatch[0x86] = |cpu: &mut DW8051_RTL837x| {
@@ -1345,7 +1470,7 @@ impl DW8051_RTL837x {
         };
         self.dispatch[0x91] = |cpu: &mut DW8051_RTL837x| {
             cpu.op_acall();
-            cpu.opcode_additional_work("ACALL", 1, 1);
+            cpu.opcode_additional_work("ACALL", 1, 0);
         };
         self.dispatch[0x92] = |cpu: &mut DW8051_RTL837x| {
             cpu.op_mov_bit_c(MCS51_ADDRESSING::DATA(1));
@@ -1476,9 +1601,9 @@ impl DW8051_RTL837x {
             cpu.op_anl_c(MCS51_ADDRESSING::DIRECT(1), true);
             cpu.opcode_additional_work("ANL", 1, 2)
         };
-        self.dispatch[0xB1] = |_cpu: &mut DW8051_RTL837x| {};
-        self.dispatch[0xB2] = |_cpu: &mut DW8051_RTL837x| {};
-        self.dispatch[0xB3] = |_cpu: &mut DW8051_RTL837x| {};
+        self.dispatch[0xB1] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xB1: not supported");
+        self.dispatch[0xB2] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xB2: not supported");
+        self.dispatch[0xB3] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xB3: not supported");
         self.dispatch[0xB4] = |cpu: &mut DW8051_RTL837x| {
             cpu.op_cjne(
                 MCS51_ADDRESSING::ACCUMULATOR,
@@ -1580,7 +1705,7 @@ impl DW8051_RTL837x {
             cpu.op_push(MCS51_ADDRESSING::REGISTER(reg));
             cpu.opcode_additional_work("PUSH", 2, 2)
         };
-        self.dispatch[0xC1] = |_cpu: &mut DW8051_RTL837x| {};
+        self.dispatch[0xC1] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xC1: not supported");
         self.dispatch[0xC2] = |cpu: &mut DW8051_RTL837x| {
             cpu.op_clrb(MCS51_ADDRESSING::DATA(1));
             cpu.opcode_additional_work("CLR", 2, 2)
@@ -1642,7 +1767,7 @@ impl DW8051_RTL837x {
             cpu.op_pop(MCS51_ADDRESSING::REGISTER(reg));
             cpu.opcode_additional_work("POP", 2, 2)
         };
-        self.dispatch[0xD1] = |_cpu: &mut DW8051_RTL837x| {};
+        self.dispatch[0xD1] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xD1: not supported");
         self.dispatch[0xD2] = |cpu: &mut DW8051_RTL837x| {
             cpu.op_setb(MCS51_ADDRESSING::DATA(1));
             cpu.opcode_additional_work("SETB", 2, 2)
@@ -1651,13 +1776,13 @@ impl DW8051_RTL837x {
             cpu.set_carry_flag(true);
             cpu.opcode_additional_work("SETB", 1, 1)
         };
-        self.dispatch[0xD4] = |_cpu: &mut DW8051_RTL837x| {};
+        self.dispatch[0xD4] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xD4: not supported");
         self.dispatch[0xD5] = |cpu: &mut DW8051_RTL837x| {
             cpu.op_djnz(MCS51_ADDRESSING::DIRECT(1), MCS51_ADDRESSING::DATA(2), 3);
             cpu.opcode_additional_work("DJNZ", 2, 0)
         };
-        self.dispatch[0xD6] = |_cpu: &mut DW8051_RTL837x| {};
-        self.dispatch[0xD7] = |_cpu: &mut DW8051_RTL837x| {};
+        self.dispatch[0xD6] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xD6: not supported");
+        self.dispatch[0xD7] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xD7: not supported");
         self.dispatch[0xD8] = |cpu: &mut DW8051_RTL837x| {
             cpu.op_djnz(MCS51_ADDRESSING::REGISTER(0), MCS51_ADDRESSING::DATA(1), 2);
             cpu.opcode_additional_work("DJNZ", 2, 0)
@@ -1693,7 +1818,7 @@ impl DW8051_RTL837x {
         self.dispatch[0xE0] = |cpu: &mut DW8051_RTL837x| {
             cpu.opcode_additional_work("MOVX A, @DPTR", 2, 1);
         };
-        self.dispatch[0xE1] = |_cpu: &mut DW8051_RTL837x| {};
+        self.dispatch[0xE1] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xE1: not supported");
         self.dispatch[0xE2] = |cpu: &mut DW8051_RTL837x| {
             cpu.opcode_additional_work("MOVX A, @R0", 2, 1);
         };
@@ -1757,7 +1882,7 @@ impl DW8051_RTL837x {
         self.dispatch[0xF0] = |cpu: &mut DW8051_RTL837x| {
             cpu.opcode_additional_work("MOVX @DPTR, A", 2, 1);
         };
-        self.dispatch[0xF1] = |_cpu: &mut DW8051_RTL837x| warn!("DP: 0xF1");
+        self.dispatch[0xF1] = |_cpu: &mut DW8051_RTL837x| warn!("Ins: 0xF1: not supported");
         self.dispatch[0xF2] = |cpu: &mut DW8051_RTL837x| {
             cpu.opcode_additional_work("MOVX @R0, A", 2, 1);
         };
@@ -1826,7 +1951,7 @@ impl DW8051_RTL837x {
 
     pub fn opcode_additional_work(&mut self, _label: &str, cycles: u8, pc: u16) {
         if pc != 0 {
-            self.pc += pc
+            self.advance_pc(pc);
         }
         if cycles != 0 {
             self.additional_cycles = cycles
@@ -1922,7 +2047,7 @@ impl DW8051_RTL837x {
     pub fn op_djnz(&mut self, addr: MCS51_ADDRESSING, rel: MCS51_ADDRESSING, pc_offset: u16) {
         let val = self.get_u8(addr).unwrap().wrapping_sub(1);
         self.set_u8(addr, val);
-        self.pc += pc_offset;
+        self.advance_pc(pc_offset);
 
         if val != 0 {
             let rel_val = self.get_i8(rel).unwrap();
@@ -1943,7 +2068,7 @@ impl DW8051_RTL837x {
     ) {
         let dest_data = self.get_u8(dest).unwrap();
         let src_data = self.get_u8(src).unwrap();
-        self.pc += 3;
+        self.advance_pc(3);
 
         if dest_data != src_data {
             let code = self.get_i8(rel).unwrap();
@@ -2063,7 +2188,7 @@ impl DW8051_RTL837x {
     pub fn op_jnz(&mut self, code_addr: MCS51_ADDRESSING) {
         let acc = self.get_accumulator();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc += 2;
+        self.advance_pc(2);
 
         if acc != 0 {
             self.write_pc_reli(code as i16);
@@ -2073,7 +2198,7 @@ impl DW8051_RTL837x {
     pub fn op_jz(&mut self, code_addr: MCS51_ADDRESSING) {
         let acc = self.get_accumulator();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc += 2;
+        self.advance_pc(2);
 
         if acc == 0 {
             self.write_pc_reli(code as i16);
@@ -2083,7 +2208,7 @@ impl DW8051_RTL837x {
     pub fn op_jnc(&mut self, code_addr: MCS51_ADDRESSING) {
         let cf = self.get_carry_flag();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc += 2;
+        self.advance_pc(2);
 
         if !cf {
             self.write_pc_reli(code as i16);
@@ -2146,7 +2271,7 @@ impl DW8051_RTL837x {
     pub fn op_jc(&mut self, code_addr: MCS51_ADDRESSING) {
         let cf = self.get_carry_flag();
         let code = self.get_i8(code_addr).unwrap();
-        self.pc += 2;
+        self.advance_pc(2);
 
         if cf {
             self.write_pc_reli(code as i16);
@@ -2154,44 +2279,55 @@ impl DW8051_RTL837x {
     }
 
     pub fn op_reti(&mut self) {
-        if self.interrupts.is_negative() {
-            self.interrupts = self.interrupts.neg();
+        if let RunningMode::Irq(irq) = self.run_mode {
+            let pc_hi = self.pop_stack() as u16;
+            let pc_lo = self.pop_stack() as u16;
+            self.pc = (pc_hi << 8) + pc_lo;
+
+            debug!("End IRQ: {irq:?} -- PC: {:04x}", self.pc);
+            // match irq {
+            //     McuIrq::Timer0 => todo!(),
+            //     McuIrq::Serial => todo!(),
+            // }
         } else {
             error!("Invalid RETI at PC {:04x}", self.pc);
         }
-        let pc_hi = self.pop_stack() as u16;
-        let pc_lo = self.pop_stack() as u16;
-        self.pc = (pc_hi << 8) + pc_lo;
+
+        // After interrupt always goes back in Normal mode.
+        self.run_mode = RunningMode::Normal;
     }
 
-    pub fn op_int(&mut self) {
-        let int_nr = self.interrupts.trailing_zeros() as usize;
-        if let Some(int_pc) = INT_VEC.get(int_nr).copied() {
-            let pc = self.pc.to_be_bytes();
-            self.push_stack(pc[0]);
-            self.push_stack(pc[1]);
-            self.interrupts = self.interrupts.neg();
-            self.pc = int_pc;
-        } else {
-            error!("Invalid int_nr {int_nr}");
-        }
+    pub fn op_int(&mut self, irq: McuIrq) {
+        let pc_irq = match irq {
+            McuIrq::Timer0 => 0x000b,
+            McuIrq::Serial => 0x0023,
+        };
+
+        let pc = self.pc.to_be_bytes();
+        self.push_stack(pc[1]);
+        self.push_stack(pc[0]);
+
+        debug!("Start IRQ: {irq:?} PC {pc_irq:04x}");
+
+        self.pc = pc_irq;
     }
 
     pub fn op_mov(&mut self, dest: MCS51_ADDRESSING, src: MCS51_ADDRESSING) {
         let src_dat = self.get_u8(src).unwrap();
+        // debug!("MOV: {dest:?} = {src:?} {src_dat:02x}");
         self.set_u8(dest, src_dat);
     }
 
     pub fn op_ajmp(&mut self) {
         let offset = self.get_u11();
-        self.pc += 2;
+        self.advance_pc(2);
         self.pc &= 0xF800;
         self.pc += offset;
     }
 
     pub fn op_acall(&mut self) {
         let offset = self.get_u11();
-        self.pc += 2;
+        self.advance_pc(2);
         self.push_stack((self.pc & 0xFF) as u8);
         self.push_stack(((self.pc >> 8) & 0xFF) as u8);
         self.pc &= 0xF800;
@@ -2244,14 +2380,14 @@ impl DW8051_RTL837x {
     pub fn op_lcall(&mut self, addr16: MCS51_ADDRESSING) {
         let new_pc = self.get_u16(addr16).unwrap();
         trace!("LCALL: {new_pc:04x}");
-        self.pc += 3;
+        self.advance_pc(3);
         self.push_stack((self.pc & 0xFF) as u8);
         self.push_stack(((self.pc >> 8) & 0xFF) as u8);
         self.pc = new_pc;
     }
 
     pub fn op_jbc(&mut self, bit_addr: MCS51_ADDRESSING, code_addr: MCS51_ADDRESSING) {
-        self.pc += 3;
+        self.advance_pc(3);
         let bit_address = self.get_u8(bit_addr).unwrap();
 
         let bit: bool = self.read_bit(bit_address);
@@ -2259,12 +2395,13 @@ impl DW8051_RTL837x {
         if bit {
             self.write_bit(bit_address, false);
             let rel = self.get_i8(code_addr).unwrap();
-            self.write_pc_reli(rel as i16);
+            debug!("op_jbc: Clear bit BA = {bit_address:02x} JUMP: {rel}");
+            self.write_pc_reli(i16::from(rel));
         }
     }
 
     pub fn op_jnb(&mut self, bit_addr: MCS51_ADDRESSING, code_addr: MCS51_ADDRESSING) {
-        self.pc += 3;
+        self.advance_pc(3);
         let bit_address = self.get_u8(bit_addr).unwrap();
 
         let bit: bool = self.read_bit(bit_address);
@@ -2276,7 +2413,7 @@ impl DW8051_RTL837x {
     }
 
     pub fn op_jb(&mut self, bit_addr: MCS51_ADDRESSING, code_addr: MCS51_ADDRESSING) {
-        self.pc += 3;
+        self.advance_pc(3);
         let bit_address = self.get_u8(bit_addr).unwrap();
 
         let bit: bool = self.read_bit(bit_address);
@@ -2340,7 +2477,7 @@ impl DW8051_RTL837x {
 
     pub fn op_sjmp(&mut self, addr: MCS51_ADDRESSING) {
         let addr_rel = i16::from(self.get_i8(addr).unwrap());
-        self.pc += 2;
+        self.advance_pc(2);
         self.write_pc_reli(addr_rel);
     }
 
@@ -2388,9 +2525,9 @@ trait IOComponent {
     fn set_port_u16(&mut self, port: usize, val: u16);
 }*/
 
-const INT_VEC: [u16; 13] = [
-    0x33, 0x03, 0x0b, 0x13, 0x1b, 0x23, 0x2b, 0x3b, 0x43, 0x4b, 0x53, 0x5b, 0x63,
-];
+// const INT_VEC: [u16; 13] = [
+//     0x33, 0x03, 0x0b, 0x13, 0x1b, 0x23, 0x2b, 0x3b, 0x43, 0x4b, 0x53, 0x5b, 0x63,
+// ];
 
 impl MCU<u8> for DW8051_RTL837x {
     fn clock(&mut self) {
@@ -2402,23 +2539,74 @@ impl MCU<u8> for DW8051_RTL837x {
     }
 
     fn next_instruction(&mut self) {
-        // jump interrupt
-        if self.interrupts > 0 {
-            self.op_int();
+        self.steps += 1;
+
+        // Receive UART0 data
+        if let Some((_, rx)) = &mut self.ext_uart_0
+            && let Ok(val) = rx.try_recv()
+        {
+            self.write_sfr(MCS51_REGISTERS::SBUF, val);
+            self.write_bit(0x98, true);
         }
-        let Some(opcode) = self.program.get(self.pc as usize).copied() else {
-            error!(
-                "Error: Out of Program Mem: PC {:04x} MEM: {:04x}",
-                self.pc,
-                self.program.len()
+
+        // jump interrupt, this needs to be optimized, but for now it is OK.
+        if self.run_mode.need_scan_irq() {
+            let ie = self.read_sfr(MCS51_REGISTERS::IE);
+
+            // Globel interrupt enabled?
+            if ie & 0x80 != 0 {
+                // Check serial interrupt
+                let ser = self.read_sfr(MCS51_REGISTERS::SCON);
+                if ie & 0x10 != 0 && ser & 0x03 != 0x00 {
+                    self.run_mode = RunningMode::Irq(McuIrq::Serial);
+                } else {
+                    // check timer
+                    let tcon = self.read_sfr(MCS51_REGISTERS::TCON);
+
+                    // debug!("TCON {tcon:02x} ");
+
+                    if tcon & 0x32 == 0x32 {
+                        // TF0 flag
+                        self.write_sfr(MCS51_REGISTERS::TCON, tcon & !0x20);
+                        self.run_mode = RunningMode::Irq(McuIrq::Timer0);
+                    }
+                }
+                if let RunningMode::Irq(irq) = self.run_mode {
+                    // Clear Idle Mode
+                    let pcon = self.get_sfr_mut(MCS51_REGISTERS::SCON).expect("Must valid");
+                    *pcon &= !0x03;
+                    self.op_int(irq);
+                }
+            }
+        }
+
+        if self.run_mode.is_running() {
+            let Some(opcode) = self.program.get(self.pc as usize).copied() else {
+                error!(
+                    "Error: Out of Program Mem: PC {:04x} MEM: {:04x}",
+                    self.pc,
+                    self.program.len()
+                );
+                return;
+            };
+            self.op_pc = self.pc;
+
+            // println!("\t PC {:04x} {:02x}", self.pc, opcode);
+
+            debug!("\ts {:08x} - {:04x} : {:02x}", self.steps, self.pc, opcode);
+
+            self.run_opcode(opcode);
+        } else {
+            debug!(
+                "Idle Mode {:02x}{:02x} IE: {:02x} TCON {:02x}",
+                self.read_sfr(MCS51_REGISTERS::TH0),
+                self.read_sfr(MCS51_REGISTERS::TL0),
+                self.read_sfr(MCS51_REGISTERS::IE),
+                self.read_sfr(MCS51_REGISTERS::TCON),
             );
-            return;
-        };
-        self.op_pc = self.pc;
-
-        // println!("\t PC {:04x} {:02x}", self.pc, opcode);
-
-        self.run_opcode(opcode);
+            // Idle mode, but Timer must advance
+            self.advance_pc(0);
+        }
     }
 
     fn run_opcode(&mut self, opcode: u8) {
@@ -2454,7 +2642,13 @@ impl MCU<u8> for DW8051_RTL837x {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use log::info;
     use tokio::sync::mpsc::channel;
+
+    fn log_setup() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        info!("bla");
+    }
 
     #[test]
     fn serial_interrupt() {
@@ -2463,8 +2657,15 @@ mod tests {
         let mut mcu = DW8051_RTL837x::new();
         mcu.setup();
 
-        println!("RI: {}", mcu.read_bit(0xF0));
-        println!("TI: {}", mcu.read_bit(0xF1));
+        assert!(
+            !mcu.read_bit(0xF0),
+            "RI bit should be false, is the default reset value"
+        );
+
+        assert!(
+            !mcu.read_bit(0xF1),
+            "TI bit should be false, is the default reset value"
+        );
 
         mcu.debug = true;
 
@@ -2545,6 +2746,8 @@ mod tests {
 
     #[test]
     fn bits_test() {
+        log_setup();
+
         let mut mcu = DW8051_RTL837x::new();
         mcu.setup();
 
@@ -2579,4 +2782,215 @@ mod tests {
         assert_eq!(mcu.pc, 0x0004);
         assert_eq!(mcu.get_accumulator(), 32);
     }
+
+    #[test]
+    fn image_basic_uart_send() {
+        let mut serial_console = Vec::<u8>::new();
+
+        let mut mcu = DW8051_RTL837x::new();
+        mcu.setup();
+
+        assert!(
+            !mcu.read_bit(0xF0),
+            "RI bit should be false, is the default reset value"
+        );
+
+        assert!(
+            !mcu.read_bit(0xF1),
+            "TI bit should be false, is the default reset value"
+        );
+
+        mcu.debug = true;
+
+        let (send_tx, mut recv_tx) = channel(32);
+        let (mut _send_rx, recv_rx) = channel(32);
+
+        mcu.ext_uart_0 = Some((send_tx, recv_rx));
+
+        let prg = include_bytes!("../../../tests/basic-uart-send/output/main.bin");
+
+        mcu.set_program(prg.to_vec());
+
+        for _ in 1..550 {
+            mcu.next_instruction();
+            if let Ok(val) = recv_tx.try_recv() {
+                serial_console.push(val);
+                if val == b'\n' {
+                    break;
+                }
+            }
+        }
+
+        println!("RI: {}", mcu.read_bit(0x98));
+        println!("TI: {}", mcu.read_bit(0x99));
+
+        assert_eq!(
+            String::from_utf8_lossy(&serial_console),
+            "1 Image installer running\r\n"
+        );
+    }
+
+    #[test]
+    fn image_basic_uart_echo_poll() {
+        let mut mcu = DW8051_RTL837x::new();
+        mcu.setup();
+
+        assert!(
+            !mcu.read_bit(0xF0),
+            "RI bit should be false, is the default reset value"
+        );
+
+        assert!(
+            !mcu.read_bit(0xF1),
+            "TI bit should be false, is the default reset value"
+        );
+
+        mcu.debug = true;
+
+        let (send_tx, mut recv_tx) = channel(32);
+        let (send_rx, recv_rx) = channel(32);
+
+        mcu.ext_uart_0 = Some((send_tx, recv_rx));
+
+        let prg = include_bytes!("../../../tests/basic-uart-echo-poll/output/main.bin");
+
+        mcu.set_program(prg.to_vec());
+
+        for &b in b"Send test" {
+            send_rx.try_send(b).expect("No issues");
+
+            let mut ret_c: Option<u8> = None;
+
+            for _ in 1..20 {
+                mcu.next_instruction();
+                if let Ok(val) = recv_tx.try_recv() {
+                    ret_c = Some(val);
+                    break;
+                }
+            }
+
+            assert_eq!(ret_c, Some(b));
+        }
+
+        println!("RI: {}", mcu.read_bit(0x98));
+        println!("TI: {}", mcu.read_bit(0x99));
+    }
+
+    #[test]
+    fn image_timer_overflow_flag() {
+        let mut mcu = DW8051_RTL837x::new();
+        mcu.setup();
+
+        assert!(
+            !mcu.read_bit(0xF0),
+            "RI bit should be false, is the default reset value"
+        );
+
+        assert!(
+            !mcu.read_bit(0xF1),
+            "TI bit should be false, is the default reset value"
+        );
+
+        mcu.debug = true;
+
+        let (send_tx, mut recv_tx) = channel(32);
+        let (_send_rx, recv_rx) = channel(32);
+
+        mcu.ext_uart_0 = Some((send_tx, recv_rx));
+
+        let prg = include_bytes!("../../../tests/basic-tmr-overflow-flag/output/main.bin");
+        mcu.set_program(prg.to_vec());
+
+        // for _ in 0..20 {
+        //     mcu.next_instruction();
+        // }
+
+        // info!(
+        //     "TMR0: {:02x}{:02x} TCON: {:02x}",
+        //     mcu.read_sfr(MCS51_REGISTERS::TH0),
+        //     mcu.read_sfr(MCS51_REGISTERS::TL0),
+        //     mcu.read_sfr(MCS51_REGISTERS::TCON)
+        // );
+
+        // mcu.next_instruction();
+
+        // info!(
+        //     "TMR0: {:02x}{:02x} TCON: {:02x}",
+        //     mcu.read_sfr(MCS51_REGISTERS::TH0),
+        //     mcu.read_sfr(MCS51_REGISTERS::TL0),
+        //     mcu.read_sfr(MCS51_REGISTERS::TCON)
+        // );
+
+        // // force overflow
+        // mcu.write_sfr(MCS51_REGISTERS::TH0, 0xFF);
+        // mcu.write_sfr(MCS51_REGISTERS::TL0, 0xFF);
+
+        // // tmr0 overflag is not set
+        // assert!(!mcu.read_bit(0x88 + 5));
+
+        // mcu.next_instruction();
+
+        // // tmr0 overflag should set
+        // assert!(mcu.read_bit(0x88 + 5));
+
+        for (idx, &b) in b"\x00\x00\x01\x01\x02\x02".iter().enumerate() {
+            // send_rx.try_send(b).expect("No issues");
+
+            let mut ret_c: Option<u8> = None;
+
+            for _ in 1..200 {
+                mcu.next_instruction();
+                if let Ok(val) = recv_tx.try_recv() {
+                    ret_c = Some(val);
+                    break;
+                }
+            }
+
+            mcu.set_program(prg.to_vec());
+            info!(
+                "TMR0: {:02x}{:02x}",
+                mcu.read_sfr(MCS51_REGISTERS::TH0),
+                mcu.read_sfr(MCS51_REGISTERS::TL0)
+            );
+
+            println!("idx {idx} {ret_c:?} {b}");
+            println!("AE: {}", mcu.read_bit(0xA8 + 7));
+            println!("RI: {}", mcu.read_bit(0x98));
+            println!("TI: {}", mcu.read_bit(0x99));
+            assert_eq!(ret_c, Some(b));
+        }
+
+        println!("RI: {}", mcu.read_bit(0x98));
+        println!("TI: {}", mcu.read_bit(0x99));
+    }
+
+    // #[test]
+    // fn real_sw_firmware() {
+    //     let mut mcu = DW8051_RTL837x::new();
+    //     mcu.setup();
+
+    //     assert!(
+    //         !mcu.read_bit(0xF0),
+    //         "RI bit should be false, is the default reset value"
+    //     );
+
+    //     assert!(
+    //         !mcu.read_bit(0xF1),
+    //         "TI bit should be false, is the default reset value"
+    //     );
+
+    //     mcu.debug = true;
+
+    //     let (send_tx, mut recv_tx) = channel(32);
+    //     let (_send_rx, recv_rx) = channel(32);
+
+    //     mcu.ext_uart_0 = Some((send_tx, recv_rx));
+
+    //     let prg = include_bytes!("~/Downloads/SWTG124AS-v2.bin");
+    //     mcu.set_program((&prg[2..]).to_vec());
+
+    //     for _ in 1..2000 {
+    //         mcu.next_instruction();
+    //     }
+    // }
 }

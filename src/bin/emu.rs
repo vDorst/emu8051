@@ -1,5 +1,6 @@
-use std::{io, time::Duration};
+use std::{io, os::unix::fs::MetadataExt, sync::atomic::AtomicBool, time::Duration};
 
+use clap::{Parser, arg, command};
 use crossterm::{
     cursor::position,
     event::{Event, EventStream, KeyCode, MouseEvent},
@@ -66,10 +67,7 @@ async fn main_loop<T: Backend>(
         select! {
             _ = delay => { },
             console_rx = uart_rx => match console_rx {
-                None => {
-                    error!("UART channel closed!");
-                    break;
-                }
+                None => return Err(Box::new(std::io::Error::other("UART channel closed!"))),
                 Some(c) => { console.push(c); }
             },
 
@@ -85,6 +83,12 @@ async fn main_loop<T: Backend>(
                         if event == Event::Key(KeyCode::Esc.into()) {
                             break;
                         } else if let Event::Key( key ) = event {
+                            if app.selected_win == Win::Log {
+                                  if let KeyCode::Char('h') = key.code {
+                                        info!("Unhalt program!");
+                                        HALT.store(false, std::sync::atomic::Ordering::Relaxed);
+                                  }
+                            }
                             if app.selected_win == Win::Serial {
                                 let mut send_c: Option<u8> = None;
                                 if let KeyCode::Char(val) = key.code {
@@ -159,21 +163,34 @@ async fn main_loop<T: Backend>(
     Ok(())
 }
 
+static HALT: AtomicBool = AtomicBool::new(false);
+
 struct SimSettings {
     uart: Option<(Sender<u8>, Receiver<u8>)>,
+    prg_mem: Vec<u8>,
+    args: Args,
 }
 
 async fn simulator_tasks(settings: SimSettings) {
+    info!("Program loaded: size: {}", settings.prg_mem.len());
+
+    HALT.store(settings.args.halt, std::sync::atomic::Ordering::Relaxed);
+
     let mut mcu = DW8051_RTL837x::new();
+
     mcu.setup();
 
     mcu.debug = false;
 
     mcu.ext_uart_0 = settings.uart;
+    mcu.set_program(settings.prg_mem);
 
-    let prg = include_bytes!("../../data/rtlinstall.bin");
-
-    mcu.set_program(prg.to_vec());
+    if HALT.load(std::sync::atomic::Ordering::Relaxed) {
+        info!("Program halted!");
+        while HALT.load(std::sync::atomic::Ordering::Relaxed) {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
 
     loop {
         mcu.next_instruction();
@@ -181,8 +198,37 @@ async fn simulator_tasks(settings: SimSettings) {
     }
 }
 
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Firmware to load
+    #[arg(long)]
+    bin: String,
+    /// Halted, program whem loaded
+    #[arg(long)]
+    halt: bool,
+}
+
+const MAX_FLASH_SIZE: u32 = 4 * 1024 * 1024;
+
+fn load_memory_file(filename: &str) -> Result<Vec<u8>, Box<dyn core::error::Error>> {
+    let metadata = std::fs::metadata(filename)?;
+
+    if metadata.is_file() && metadata.size() <= u64::from(MAX_FLASH_SIZE) {
+        return Ok(std::fs::read(filename)?);
+    }
+
+    Err(Box::new(std::io::Error::other("{filename} is not a file!")))
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn core::error::Error>> {
+    // Parse args.
+    let args = Args::parse();
+
+    let prg_mem = load_memory_file(&args.bin)?;
+
     // Initialize terminal
     let mut stdout = io::stdout();
 
@@ -206,6 +252,8 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     let app_cfg = SimSettings {
         uart: Some((rx_send, tx_recv)),
+        prg_mem: prg_mem,
+        args: args,
     };
 
     let sid = tokio::spawn(simulator_tasks(app_cfg));
@@ -228,7 +276,19 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     terminal::disable_raw_mode()?;
 
-    // Cleanup
+    if let Err(err) = sid.await {
+        let Ok(panic) = err.try_into_panic() else {
+            return Err(Box::new(std::io::Error::other("Emu task crashed!")))?;
+        };
 
+        let ps = panic
+            .downcast_ref::<String>()
+            .map(|s| &**s)
+            .or_else(|| panic.downcast_ref::<&'static str>().copied())
+            .unwrap_or("(non-string payload)");
+        panic!("{ps}");
+    };
+
+    // Cleanup
     ret
 }
