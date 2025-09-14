@@ -1,61 +1,62 @@
 use log::{debug, error, info, trace, warn};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::traits::component::MCU;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, TryFromPrimitive, IntoPrimitive)]
+#[repr(u8)]
 pub enum MCS51_REGISTERS {
-    SFR_FLASH_EXEC = 0,
-    SP,
-    DPL1,
-    DPH1,
-    DPL2,
-    DPH2,
-    DPS,
-    PCON,
-    TCON,
-    TMOD,
-    TL0,
-    TL1,
-    TH0,
-    TH1,
-    P1,
-    SCON,
-    SBUF,
-    SFR_EXEC_GO,
-    IE,
-    P3,
-    IP,
-    T2CON,
-    RCAP2L,
-    RCAP2H,
-    TL2,
-    TH2,
-    PSW,
-    ACC,
-    B,
-    SFR_EXEC_STATUS,
-    SFR_REG_ADDRH,
-    SFR_REG_ADDRL,
-    SFR_REG_DATA_24,
-    SFR_REG_DATA_16,
-    SFR_REG_DATA_8,
-    SFR_REG_DATA_0,
-    SFR_SMI_REGH,
-    SFR_SMI_REGL,
-    SFR_SMI_DEV,
-    SFR_SMI_PHYMASK,
-    EXIF,
-    EIE,
-    PSBANK,
-    SFR_FLASH_CMD_R,
-    SFR_FLASH_CONFIG,
-    SFR_FLASH_CMD,
-    CKCON,
-    SFR_97,
-    SFR_B9,
-    SFR_BA,
-    REGISTER_COUNT,
+    SFR_FLASH_EXEC = 0x80,
+    SP = 0x81,
+    DPL1 = 0x82,
+    DPH1 = 0x83,
+    DPL2 = 0x84,
+    DPH2 = 0x85,
+    DPS = 0x86,
+    PCON = 0x87,
+    TCON = 0x88,
+    TMOD = 0x89,
+    TL0 = 0x8A,
+    TL1 = 0x8B,
+    TH0 = 0x8C,
+    TH1 = 0x8D,
+    CKCON = 0x8e,
+    P1 = 0x90,
+    EXIF = 0x91,
+    PSBANK = 0x96,
+    SFR_97 = 0x97,
+    SCON = 0x98,
+    SBUF = 0x99,
+    SFR_EXEC_GO = 0xA0,
+    SFR_EXEC_STATUS = 0xA1,
+    SFR_REG_ADDRH = 0xA2,
+    SFR_REG_ADDRL = 0xA3,
+    SFR_REG_DATA_24 = 0xA4,
+    SFR_REG_DATA_16 = 0xA5,
+    SFR_REG_DATA_8 = 0xA6,
+    SFR_REG_DATA_0 = 0xA7,
+    IE = 0xA8,
+    P3 = 0xB0,
+    SFR_FLASH_CMD_R = 0xB1,
+    SFR_FLASH_CMD = 0xB2,
+    IP = 0xB8,
+    SFR_b9 = 0xb9,
+    SFR_ba = 0xba,
+    SFR_FLASH_CONFIG = 0xBC,
+    SFR_SMI_REGH = 0xC2,
+    SFR_SMI_REGL = 0xC3,
+    SFR_SMI_DEV = 0xC4,
+    SFR_SMI_PHYMASK = 0xC5,
+    T2CON = 0xC8,
+    RCAP2L = 0xCA,
+    RCAP2H = 0xCB,
+    TL2 = 0xCC,
+    TH2 = 0xCD,
+    PSW = 0xD0,
+    ACC = 0xE0,
+    EIE = 0xE8,
+    B = 0xF0,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -95,13 +96,15 @@ impl RunningMode {
     }
 }
 
+const SFR_OFFSET: usize = 0x80;
+
 pub struct DW8051_RTL837x {
     pub pc: u16,
     pub op_pc: u16,
     pub timer0: u16,
     pub run_mode: RunningMode,
     program: Vec<u8>,
-    pub special_function_registers: [u8; MCS51_REGISTERS::REGISTER_COUNT as usize],
+    pub special_function_registers: [u8; 128],
     pub ram: [u8; 256],
     pub xdata: [u8; 48 * 1024],
     pub additional_cycles: u8,
@@ -123,7 +126,7 @@ impl DW8051_RTL837x {
             run_mode: RunningMode::Normal,
             ram: [0; 256],
             program: vec![],
-            special_function_registers: [0; MCS51_REGISTERS::REGISTER_COUNT as usize],
+            special_function_registers: [0; _],
             additional_cycles: 0,
             dispatch: [|_cpu| {}; 256],
             debug: false,
@@ -158,11 +161,14 @@ impl DW8051_RTL837x {
     }
 
     pub fn get_sfr_mut(&mut self, register: MCS51_REGISTERS) -> Option<&mut u8> {
-        self.special_function_registers.get_mut(register as usize)
+        self.special_function_registers
+            .get_mut(register as usize - SFR_OFFSET)
     }
 
     pub fn read_sfr(&self, register: MCS51_REGISTERS) -> u8 {
-        self.special_function_registers[register as usize]
+        let val = self.special_function_registers[register as usize - SFR_OFFSET];
+        debug!("read_sfr() {register:?} = {val:02x}");
+        val
     }
 
     pub fn write_sfr(&mut self, register: MCS51_REGISTERS, value: u8) {
@@ -186,7 +192,8 @@ impl DW8051_RTL837x {
             _ => (),
         }
 
-        self.special_function_registers[register as usize] = value;
+        debug!("write_sfr() {register:?} = {value:02x}");
+        self.special_function_registers[register as usize - SFR_OFFSET] = value;
     }
 
     pub fn write_sfr_rel(&mut self, register: MCS51_REGISTERS, value: u8, sub: bool) {
@@ -222,29 +229,19 @@ impl DW8051_RTL837x {
     }
 
     pub fn get_register_mut(&mut self, register: u8) -> Option<&mut u8> {
-        if register == 99 {
-            trace!("SBUS");
-        }
         let bank = self.get_current_register_bank_flags();
+
         self.ram.get_mut(register as usize + bank as usize)
     }
 
     pub fn read_register(&self, register: u8) -> u8 {
         let bank = self.get_current_register_bank_flags();
 
-        if register == 0x99 {
-            debug!("read SBUS = ");
-        }
-
         self.ram[register as usize + bank as usize]
     }
 
     pub fn write_register(&mut self, register: u8, value: u8) {
         let bank = self.get_current_register_bank_flags();
-
-        if register == 0x99 {
-            debug!("SBUS = {value}");
-        }
 
         self.ram[register as usize + bank as usize] = value;
     }
@@ -285,7 +282,6 @@ impl DW8051_RTL837x {
                         let tmr_val = u16::from_le_bytes([tl, th]);
                         let mut tmr_new_val = tmr_val.wrapping_add(cycle + 2);
                         if mode == 0b00 {
-                            error!("T{tmr}: 13-bit!");
                             // 13-bit mode
                             tmr_new_val &= 0x1FFF;
                         }
@@ -330,184 +326,40 @@ impl DW8051_RTL837x {
         let bit = 1 << (address & 0x7);
 
         let value = self.read(register);
-        let val = *value.unwrap();
+        let val = value.unwrap();
         (val & bit) != 0
     }
 
     pub fn write_bit(&mut self, address: u8, value: bool) {
         let addr = address & 0xF8;
-
-        // println!("W-BIT {:0x} {:0x} {value}", address, addr);
-
         let bit = 1_u8 << (address & 0x7);
-        let mut src = *self.read(addr).unwrap();
 
+        let mut src = self.read(addr).unwrap();
         if value {
             src |= bit;
         } else {
             src &= !bit;
         }
-
         self.write(addr, src);
-
-        if address == 0x99 || address == 0xAF {
-            debug!("## write_bit() TI = {value} REG: {addr:02x} = {src:02x}");
-        }
     }
 
     pub fn read_raw(&self, address: u8) -> u8 {
-        match address {
-            0x00..=0x7F => self.ram[address as usize],
-            0x80 => self.special_function_registers[MCS51_REGISTERS::SFR_FLASH_EXEC as usize],
-            0x81 => self.special_function_registers[MCS51_REGISTERS::SP as usize],
-            0x82 => self.special_function_registers[MCS51_REGISTERS::DPL1 as usize],
-            0x83 => self.special_function_registers[MCS51_REGISTERS::DPH1 as usize],
-            0x84 => self.special_function_registers[MCS51_REGISTERS::DPL2 as usize],
-            0x85 => self.special_function_registers[MCS51_REGISTERS::DPH2 as usize],
-            0x86 => self.special_function_registers[MCS51_REGISTERS::DPS as usize],
-            0x87 => self.special_function_registers[MCS51_REGISTERS::PCON as usize],
-            0x88 => self.special_function_registers[MCS51_REGISTERS::TCON as usize],
-            0x89 => self.special_function_registers[MCS51_REGISTERS::TMOD as usize],
-            0x8A => self.special_function_registers[MCS51_REGISTERS::TL0 as usize],
-            0x8B => self.special_function_registers[MCS51_REGISTERS::TL1 as usize],
-            0x8C => self.special_function_registers[MCS51_REGISTERS::TH0 as usize],
-            0x8D => self.special_function_registers[MCS51_REGISTERS::TH1 as usize],
-            0x90 => self.special_function_registers[MCS51_REGISTERS::P1 as usize],
-            0x91 => self.special_function_registers[MCS51_REGISTERS::EXIF as usize],
-            0x96 => self.special_function_registers[MCS51_REGISTERS::PSBANK as usize],
-            0x98 => self.special_function_registers[MCS51_REGISTERS::SCON as usize],
-            0x99 => self.special_function_registers[MCS51_REGISTERS::SBUF as usize],
-            0xA0 => self.special_function_registers[MCS51_REGISTERS::SFR_EXEC_GO as usize],
-            0xA1 => self.special_function_registers[MCS51_REGISTERS::SFR_EXEC_STATUS as usize],
-            0xA2 => self.special_function_registers[MCS51_REGISTERS::SFR_REG_ADDRH as usize],
-            0xA3 => self.special_function_registers[MCS51_REGISTERS::SFR_REG_ADDRL as usize],
-            0xA4 => self.special_function_registers[MCS51_REGISTERS::SFR_REG_DATA_24 as usize],
-            0xA5 => self.special_function_registers[MCS51_REGISTERS::SFR_REG_DATA_16 as usize],
-            0xA6 => self.special_function_registers[MCS51_REGISTERS::SFR_REG_DATA_8 as usize],
-            0xA7 => self.special_function_registers[MCS51_REGISTERS::SFR_REG_DATA_0 as usize],
-            0xA8 => self.special_function_registers[MCS51_REGISTERS::IE as usize],
-            0xB0 => self.special_function_registers[MCS51_REGISTERS::P3 as usize],
-            0xB1 => self.special_function_registers[MCS51_REGISTERS::SFR_FLASH_CMD_R as usize],
-            0xB2 => self.special_function_registers[MCS51_REGISTERS::SFR_FLASH_CMD as usize],
-            0xB8 => self.special_function_registers[MCS51_REGISTERS::IP as usize],
-            0xBC => self.special_function_registers[MCS51_REGISTERS::SFR_FLASH_CONFIG as usize],
-            0xC2 => self.special_function_registers[MCS51_REGISTERS::SFR_SMI_REGH as usize],
-            0xC3 => self.special_function_registers[MCS51_REGISTERS::SFR_SMI_REGL as usize],
-            0xC4 => self.special_function_registers[MCS51_REGISTERS::SFR_SMI_DEV as usize],
-            0xC5 => self.special_function_registers[MCS51_REGISTERS::SFR_SMI_PHYMASK as usize],
-
-            0xC8 => self.special_function_registers[MCS51_REGISTERS::T2CON as usize],
-            0xCA => self.special_function_registers[MCS51_REGISTERS::RCAP2L as usize],
-            0xCB => self.special_function_registers[MCS51_REGISTERS::RCAP2H as usize],
-            0xCC => self.special_function_registers[MCS51_REGISTERS::TL2 as usize],
-            0xCD => self.special_function_registers[MCS51_REGISTERS::TH2 as usize],
-            0xD0 => self.special_function_registers[MCS51_REGISTERS::PSW as usize],
-            0xE0 => self.special_function_registers[MCS51_REGISTERS::ACC as usize],
-            0xE8 => self.special_function_registers[MCS51_REGISTERS::EIE as usize],
-            0xF0 => self.special_function_registers[MCS51_REGISTERS::B as usize],
-            _ => 0,
+        if (0x00..=0x7F).contains(&address) {
+            self.ram[address as usize]
+        } else {
+            MCS51_REGISTERS::try_from_primitive(address)
+                .map(|reg| self.read_sfr(reg))
+                .unwrap_or_default()
         }
     }
 
     pub fn get_mut_addr(&mut self, address: u8) -> Option<&mut u8> {
-        match address {
-            0x00..=0x7F => self.ram.get_mut(address as usize),
-            0x80 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::SFR_FLASH_EXEC as usize),
-            0x81 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::SP as usize),
-            0x82 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::DPL1 as usize),
-            0x83 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::DPH1 as usize),
-            0x84 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::DPL2 as usize),
-            0x85 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::DPH2 as usize),
-            0x86 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::DPS as usize),
-            0x87 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::PCON as usize),
-            0x88 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TCON as usize),
-            0x89 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TMOD as usize),
-            0x8A => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TL0 as usize),
-            0x8B => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TL1 as usize),
-            0x8C => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TH0 as usize),
-            0x8D => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TH1 as usize),
-            0x90 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::P1 as usize),
-            0x98 => {
-                let val = self
-                    .special_function_registers
-                    .get_mut(MCS51_REGISTERS::SCON as usize);
-                debug!("##get_mut_addr() SCON = {val:02x?}");
-
-                val
-            }
-            0x99 => {
-                debug!("##get_mut_addr() TI");
-
-                self.special_function_registers
-                    .get_mut(MCS51_REGISTERS::SBUF as usize)
-            }
-            0xA0 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::SFR_EXEC_GO as usize),
-            0xA8 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::IE as usize),
-            0xB0 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::P3 as usize),
-            0xB8 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::IP as usize),
-            0xC8 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::T2CON as usize),
-            0xCA => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::RCAP2L as usize),
-            0xCB => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::RCAP2H as usize),
-            0xCC => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TL2 as usize),
-            0xCD => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::TH2 as usize),
-            0xD0 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::PSW as usize),
-            0xE0 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::ACC as usize),
-            0xF0 => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::B as usize),
-            _ => None,
+        if (0x00..=0x7F).contains(&address) {
+            self.ram.get_mut(address as usize)
+        } else {
+            MCS51_REGISTERS::try_from_primitive(address)
+                .ok()
+                .and_then(|reg| self.get_sfr_mut(reg))
         }
     }
 
@@ -515,141 +367,26 @@ impl DW8051_RTL837x {
         self.ram.get(address as usize).copied()
     }
 
-    pub fn read(&self, address: u8) -> Option<&u8> {
-        match address {
-            0x00..=0x7F => self.ram.get(address as usize),
-            0x80 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::SFR_FLASH_EXEC as usize),
-            0x81 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::SP as usize),
-            0x82 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::DPL1 as usize),
-            0x83 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::DPH1 as usize),
-            0x87 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::PCON as usize),
-            0x88 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TCON as usize),
-            0x89 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TMOD as usize),
-            0x8A => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TL0 as usize),
-            0x8B => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TL1 as usize),
-            0x8C => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TH0 as usize),
-            0x8D => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TH1 as usize),
-            0x90 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::P1 as usize),
-            0x96 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::PSBANK as usize),
-            0x98 => {
-                let val = self
-                    .special_function_registers
-                    .get(MCS51_REGISTERS::SCON as usize);
-                debug!("##read() SCON = {val:?}");
-
-                val
-            }
-            0x99 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::SBUF as usize),
-            0xA0 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::SFR_EXEC_GO as usize),
-            0xA8 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::IE as usize),
-            0xB0 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::P3 as usize),
-            0xB8 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::IP as usize),
-            0xC8 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::T2CON as usize),
-            0xCA => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::RCAP2L as usize),
-            0xCB => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::RCAP2H as usize),
-            0xCC => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TL2 as usize),
-            0xCD => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::TH2 as usize),
-            0xD0 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::PSW as usize),
-            0xE0 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::ACC as usize),
-            0xF0 => self
-                .special_function_registers
-                .get(MCS51_REGISTERS::B as usize),
-            _ => None,
+    pub fn read(&self, address: u8) -> Option<u8> {
+        // println!("read() {address:02x}");
+        if (0x00..=0x7F).contains(&address) {
+            self.ram.get(address as usize).copied()
+        } else {
+            MCS51_REGISTERS::try_from_primitive(address)
+                .ok()
+                .map(|reg| self.read_sfr(reg))
         }
     }
 
     pub fn write(&mut self, address: u8, value: u8) {
-        // trace!("## WRITE: A {address:04x} = {value:02x}");
-        match address {
-            0x00..=0x7F => self.ram[address as usize] = value,
-            sfr => {
-                let sfr_reg: MCS51_REGISTERS = match sfr {
-                    0x80 => MCS51_REGISTERS::SFR_FLASH_EXEC,
-                    0x81 => MCS51_REGISTERS::SP,
-                    0x82 => MCS51_REGISTERS::DPL1,
-                    0x83 => MCS51_REGISTERS::DPH1,
-                    0x87 => MCS51_REGISTERS::PCON,
-                    0x88 => MCS51_REGISTERS::TCON,
-                    0x89 => MCS51_REGISTERS::TMOD,
-                    0x8A => MCS51_REGISTERS::TL0,
-                    0x8B => MCS51_REGISTERS::TL1,
-                    0x8C => MCS51_REGISTERS::TH0,
-                    0x8D => MCS51_REGISTERS::TH1,
-                    0x8E => MCS51_REGISTERS::CKCON,
-                    0x90 => MCS51_REGISTERS::P1,
-                    0x97 => MCS51_REGISTERS::SFR_97,
-                    0x98 => MCS51_REGISTERS::SCON,
-                    0x99 => MCS51_REGISTERS::SBUF,
-                    0xA0 => MCS51_REGISTERS::SFR_EXEC_GO,
-                    0xA8 => MCS51_REGISTERS::IE,
-                    0xB0 => MCS51_REGISTERS::P3,
-                    0xB8 => MCS51_REGISTERS::IP,
-                    0xB9 => MCS51_REGISTERS::SFR_B9,
-                    0xBA => MCS51_REGISTERS::SFR_BA,
-                    0xC8 => MCS51_REGISTERS::T2CON,
-                    0xCA => MCS51_REGISTERS::RCAP2L,
-                    0xCB => MCS51_REGISTERS::RCAP2H,
-                    0xCC => MCS51_REGISTERS::TL2,
-                    0xCD => MCS51_REGISTERS::TH2,
-                    0xD0 => MCS51_REGISTERS::PSW,
-                    0xE0 => MCS51_REGISTERS::ACC,
-                    0xF0 => MCS51_REGISTERS::B,
-                    0xE8 => MCS51_REGISTERS::EIE,
-                    _ => panic!("Unkown SFR {address:02x}"),
-                };
+        if (0x00..=0x7F).contains(&address) {
+            self.ram[address as usize] = value;
+        } else {
+            let Ok(sfr_reg) = MCS51_REGISTERS::try_from_primitive(address) else {
+                panic!("write() Unkown SFR {address:02x}");
+            };
 
-                self.write_sfr(sfr_reg, value);
-            }
+            self.write_sfr(sfr_reg, value);
         }
     }
 
@@ -667,11 +404,8 @@ impl DW8051_RTL837x {
 
     pub fn set_carry_flag(&mut self, value: bool) {
         let reg = self.read_sfr(MCS51_REGISTERS::PSW);
-        if value {
-            self.write_sfr(MCS51_REGISTERS::PSW, reg | 0x80);
-        } else {
-            self.write_sfr(MCS51_REGISTERS::PSW, reg & !0x80);
-        }
+        let reg = if value { reg | 0x80 } else { reg & !0x80 };
+        self.write_sfr(MCS51_REGISTERS::PSW, reg);
     }
 
     pub fn get_carry_flag(&mut self) -> bool {
@@ -680,11 +414,8 @@ impl DW8051_RTL837x {
 
     pub fn set_aux_carry_flag(&mut self, value: bool) {
         let reg = self.read_sfr(MCS51_REGISTERS::PSW);
-        if value {
-            self.write_sfr(MCS51_REGISTERS::PSW, reg | 0x40);
-        } else {
-            self.write_sfr(MCS51_REGISTERS::PSW, reg & !0x40);
-        }
+        let reg = if value { reg | 0x40 } else { reg & !0x40 };
+        self.write_sfr(MCS51_REGISTERS::PSW, reg);
     }
 
     pub fn get_aux_carry_flag(&mut self) -> bool {
@@ -693,11 +424,8 @@ impl DW8051_RTL837x {
 
     pub fn set_overflow_flag(&mut self, value: bool) {
         let reg = self.read_sfr(MCS51_REGISTERS::PSW);
-        if value {
-            self.write_sfr(MCS51_REGISTERS::PSW, reg | 0x04);
-        } else {
-            self.write_sfr(MCS51_REGISTERS::PSW, reg & !0x04);
-        }
+        let reg = if value { reg | 0x04 } else { reg & !0x04 };
+        self.write_sfr(MCS51_REGISTERS::PSW, reg);
     }
 
     pub fn get_overflow_flag(&mut self) -> bool {
@@ -705,7 +433,7 @@ impl DW8051_RTL837x {
     }
 
     pub fn get_accumulator(&self) -> u8 {
-        self.special_function_registers[MCS51_REGISTERS::ACC as usize]
+        self.read_sfr(MCS51_REGISTERS::ACC)
     }
 
     pub fn set_accumulator(&mut self, value: u8) {
@@ -713,32 +441,38 @@ impl DW8051_RTL837x {
     }
 
     pub fn reset_registers(&mut self) {
-        self.special_function_registers[MCS51_REGISTERS::SFR_FLASH_EXEC as usize] = 0xFF;
-        self.special_function_registers[MCS51_REGISTERS::SP as usize] = 0x07;
-        self.special_function_registers[MCS51_REGISTERS::DPL1 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::DPH1 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::PCON as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TCON as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TMOD as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TL0 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TL1 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TH0 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TH1 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::P1 as usize] = 0xFF;
-        self.special_function_registers[MCS51_REGISTERS::SCON as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::SBUF as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::SFR_EXEC_GO as usize] = 0xFF;
-        self.special_function_registers[MCS51_REGISTERS::IE as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::P3 as usize] = 0xFF;
-        self.special_function_registers[MCS51_REGISTERS::IP as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::T2CON as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::RCAP2L as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::RCAP2H as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TL2 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::TH2 as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::PSW as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::ACC as usize] = 0x00;
-        self.special_function_registers[MCS51_REGISTERS::B as usize] = 0x00;
+        let init_values: [(MCS51_REGISTERS, u8); _] = [
+            (MCS51_REGISTERS::SFR_FLASH_EXEC, 0xFF),
+            (MCS51_REGISTERS::SP, 0x07),
+            (MCS51_REGISTERS::DPL1, 0x00),
+            (MCS51_REGISTERS::DPH1, 0x00),
+            (MCS51_REGISTERS::PCON, 0x00),
+            (MCS51_REGISTERS::TCON, 0x00),
+            (MCS51_REGISTERS::TMOD, 0x00),
+            (MCS51_REGISTERS::TL0, 0x00),
+            (MCS51_REGISTERS::TL1, 0x00),
+            (MCS51_REGISTERS::TH0, 0x00),
+            (MCS51_REGISTERS::TH1, 0x00),
+            (MCS51_REGISTERS::P1, 0xFF),
+            (MCS51_REGISTERS::SCON, 0x00),
+            // Don´t reset SBUF, will trigger a uart write
+            // (MCS51_REGISTERS::SBUF, 0x00),
+            (MCS51_REGISTERS::SFR_EXEC_GO, 0xFF),
+            (MCS51_REGISTERS::IE, 0x00),
+            (MCS51_REGISTERS::P3, 0xFF),
+            (MCS51_REGISTERS::IP, 0x00),
+            (MCS51_REGISTERS::T2CON, 0x00),
+            (MCS51_REGISTERS::RCAP2L, 0x00),
+            (MCS51_REGISTERS::RCAP2H, 0x00),
+            (MCS51_REGISTERS::TL2, 0x00),
+            (MCS51_REGISTERS::TH2, 0x00),
+            (MCS51_REGISTERS::PSW, 0x00),
+            (MCS51_REGISTERS::ACC, 0x00),
+            (MCS51_REGISTERS::B, 0x00),
+        ];
+        for (reg, val) in init_values {
+            self.write_sfr(reg, val);
+        }
     }
 
     pub fn next_instruction_debug_match(&mut self) {
@@ -778,9 +512,7 @@ impl DW8051_RTL837x {
 
     pub fn get_u8_mut(&mut self, addressing: MCS51_ADDRESSING) -> Option<&mut u8> {
         match addressing {
-            MCS51_ADDRESSING::ACCUMULATOR => self
-                .special_function_registers
-                .get_mut(MCS51_REGISTERS::ACC as usize),
+            MCS51_ADDRESSING::ACCUMULATOR => self.get_sfr_mut(MCS51_REGISTERS::ACC),
             MCS51_ADDRESSING::REGISTER(reg) => self.get_register_mut(reg),
             MCS51_ADDRESSING::DIRECT(offset) => {
                 self.get_mut_addr(self.program[self.op_pc as usize + offset as usize])
@@ -798,11 +530,10 @@ impl DW8051_RTL837x {
             MCS51_ADDRESSING::ACCUMULATOR => Some(self.read_sfr(MCS51_REGISTERS::ACC)),
             MCS51_ADDRESSING::REGISTER(reg) => Some(self.read_register(reg)),
             MCS51_ADDRESSING::DIRECT(offset) => Some(
-                *self
-                    .read(self.program[self.op_pc as usize + offset as usize])
+                self.read(self.program[self.op_pc as usize + offset as usize])
                     .unwrap(),
             ),
-            MCS51_ADDRESSING::INDIRECT_Ri(reg) => self.read(self.read_register(reg)).cloned(),
+            MCS51_ADDRESSING::INDIRECT_Ri(reg) => self.read(self.read_register(reg)),
             MCS51_ADDRESSING::DATA(offset) => {
                 Some(self.program[self.op_pc as usize + offset as usize])
             }
@@ -2438,6 +2169,7 @@ impl DW8051_RTL837x {
 
     // Increment
     pub fn op_inc(&mut self, operand: MCS51_ADDRESSING) {
+        println!("op_inc: {operand:?}");
         let op = self.get_u8_mut(operand).unwrap();
         *op = op.wrapping_add(1);
     }
@@ -2620,11 +2352,11 @@ impl MCU<u8> for DW8051_RTL837x {
 
     fn setup(&mut self) {
         self.reset();
-        self.reset_registers();
         self.generate_opcode_array();
     }
 
     fn reset(&mut self) {
+        info!("Reset MCU");
         self.pc = 0;
         self.ram = [0; 256];
         self.additional_cycles = 0;
