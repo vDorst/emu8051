@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "rtl837x_sfr.h"
 
+
 // #define REGDBG 1
 // #define RXTXDBG 1
 
@@ -21,35 +22,24 @@
 #define CLOCK_DIV 0
 #endif
 
-volatile uint8_t ticks;
 
 
+uint8_t rx_data = 0;
 
-void isr_timer0(void) __interrupt(1)
+void isr_serial(void) __interrupt(1)
 {
-	TR0 = 0;		// Stop timer 0
-	TH0 = (0x10000 - (CLOCK_HZ / SYS_TICK_HZ / 32)) >> 8;
-	TL0 = (0x10000 - (CLOCK_HZ / SYS_TICK_HZ / 32)) % 0xff;
-	TR0 = 1;		// Re-start timer 0
-
-	ticks++;
+	if (RI) {
+		rx_data = SBUF;
+	}
+	if (TI) {
+		TI = 0;
+	}
 }
 
 void write_char(char c)
 {
-	do {
-	} while (TI == 0);
-	TI = 0;
 	SBUF = c;
 }
-
-
-void print_string(__code char *p)
-{
-	while (*p)
-		write_char(*p++);
-}
-
 
 void setup_serial(void)
 {
@@ -66,43 +56,24 @@ void setup_serial(void)
 	PCON |= 0x80; // Double the Baud Rate
 
 	SCON = 0x50;
-	TI = 1;
+	TI = 0;
 	RI = 0;
 
 	ES = 1; // Enable serial IRQ
 }
 
-
-void installer(void)
+void main(void)
 {
     // Disable all interrupts (global and individually) by setting IE register (SFR A8) to 0
 	IE = 0;
 	EIE = 0;  // SFR e8: EIE. Disable all external IRQs
 
 	// Disable all interrupts (global interrupt enable bit)
-	EA = 0; // SFR A8.7 / IE.7
+	EA = 1; // SFR A8.7 / IE.7
 
-
-	SBUF = 0xAA;
-
-	write_char('I');
-
-	// setup_serial();
 	while (1) {
-		PSW.1
-
-		uint8_t t = (v / 100);
-		// when print_zeros is not zero, we know that a non-zero number has printed.
-		// That have to print all the next numbers.
-		uint8_t print_zeros = t;
-		if (print_zeros)
-			char_to_html('0' + t);
-		t = (v / 10) % 10;
-		print_zeros |= t;
-		if (print_zeros)
-			char_to_html('0' + t);
-		char_to_html('0' + (v % 10));
-
+		// put in idle, wait for serial
+		PCON |= 1;
+		write_char(rx_data);
 	}
-		// print_string("Image installer running\n");
 }

@@ -2,11 +2,6 @@
 #include <stdint.h>
 #include "rtl837x_sfr.h"
 
-
-// #define REGDBG 1
-// #define RXTXDBG 1
-
-
 #define SYS_TICK_HZ 100
 #define SERIAL_BAUD_RATE 57600
 #define CLOCK_HZ 125000000
@@ -21,7 +16,6 @@
 #elif CLOCK_HZ == 125000000
 #define CLOCK_DIV 0
 #endif
-
 
 void write_char(char c)
 {
@@ -58,19 +52,6 @@ void setup_serial(void)
 	RI = 0;
 
 	ES = 0; // Enable serial IRQ
-}
-
-
-char itohex(uint8_t val) {
-	// Ignore upper nibble for convenience.
-	val &= 0x0f;
-	val -= 10;
-
-	// 10 or above
-	if ((int8_t)val >= 0)
-		val += ('a' - '0' - 10);
-
-	return val + ('0' + 10);
 }
 
 void main(void)

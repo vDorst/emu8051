@@ -2877,7 +2877,53 @@ mod tests {
     }
 
     #[test]
-    fn image_timer_overflow_flag() {
+    fn image_basic_uart_echo_irq() {
+        let mut mcu = DW8051_RTL837x::new();
+        mcu.setup();
+
+        assert!(
+            !mcu.read_bit(0xF0),
+            "RI bit should be false, is the default reset value"
+        );
+
+        assert!(
+            !mcu.read_bit(0xF1),
+            "TI bit should be false, is the default reset value"
+        );
+
+        mcu.debug = true;
+
+        let (send_tx, mut recv_tx) = channel(32);
+        let (send_rx, recv_rx) = channel(32);
+
+        mcu.ext_uart_0 = Some((send_tx, recv_rx));
+
+        let prg = include_bytes!("../../../tests/basic-uart-echo-irq/output/main.bin");
+
+        mcu.set_program(prg.to_vec());
+
+        for &b in b"Send test" {
+            send_rx.try_send(b).expect("No issues");
+
+            let mut ret_c: Option<u8> = None;
+
+            for _ in 1..20 {
+                mcu.next_instruction();
+                if let Ok(val) = recv_tx.try_recv() {
+                    ret_c = Some(val);
+                    break;
+                }
+            }
+
+            assert_eq!(ret_c, Some(b));
+        }
+
+        println!("RI: {}", mcu.read_bit(0x98));
+        println!("TI: {}", mcu.read_bit(0x99));
+    }
+
+    #[test]
+    fn image_basic_timer_irq() {
         let mut mcu = DW8051_RTL837x::new();
         mcu.setup();
 
@@ -2898,7 +2944,7 @@ mod tests {
 
         mcu.ext_uart_0 = Some((send_tx, recv_rx));
 
-        let prg = include_bytes!("../../../tests/basic-tmr-overflow-flag/output/main.bin");
+        let prg = include_bytes!("../../../tests/basic-timer-irq/output/main.bin");
         mcu.set_program(prg.to_vec());
 
         // for _ in 0..20 {

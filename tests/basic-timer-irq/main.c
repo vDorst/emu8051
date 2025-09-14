@@ -1,5 +1,7 @@
 #include <8051.h>
 #include <stdint.h>
+#include "rtl837x_sfr.h"
+
 
 // #define REGDBG 1
 // #define RXTXDBG 1
@@ -20,22 +22,17 @@
 #define CLOCK_DIV 0
 #endif
 
-volatile __xdata uint32_t ticks;
-volatile __xdata uint8_t sec_counter;
-volatile __xdata uint16_t sleep_ticks;
+
+uint8_t tmr_cnt = 0;
 
 void isr_timer0(void) __interrupt(1)
 {
 	TR0 = 0;		// Stop timer 0
-	TH0 = (0x10000 - (CLOCK_HZ / SYS_TICK_HZ / 32)) >> 8;
-	TL0 = (0x10000 - (CLOCK_HZ / SYS_TICK_HZ / 32)) % 0xff;
-
-	ticks++;
-	if (sleep_ticks > 0)
-		sleep_ticks--;
-	sec_counter++;
-
+	TH0 = 0xFF;
+	TL0 = 0xA0;
 	TR0 = 1;		// Re-start timer 0
+
+	tmr_cnt += 1;
 }
 
 
@@ -56,25 +53,11 @@ void isr_ext1(void) __interrupt(2)
 
 void write_char(char c)
 {
-	do {
-	} while (TI == 0);
-	TI = 0;
-	// if (c =='\n') {
-	// 	SBUF = '\r';
-	// 	do {
-	// 	} while (TI == 0);
-	// 	TI = 0;
-	// }
 	SBUF = c;
+	do {
+	} while (!TI);
+	TI = 0;
 }
-
-
-void print_string(__code char *p)
-{
-	while (*p)
-		write_char(*p++);
-}
-
 
 void setup_serial(void)
 {
@@ -90,29 +73,47 @@ void setup_serial(void)
 
 	PCON |= 0x80; // Double the Baud Rate
 
+	// Set 16-bit mode
+	TCON = 0x01;
+
 	SCON = 0x50;
-	TI = 1;
+	TI = 0;
 	RI = 0;
 
-	ES = 1; // Enable serial IRQ
+	ES = 0; // Enable serial IRQ
 }
 
-
-void installer(void)
+void main(void)
 {
     // Disable all interrupts (global and individually) by setting IE register (SFR A8) to 0
 	IE = 0;
 	EIE = 0;  // SFR e8: EIE. Disable all external IRQs
 
+
+	setup_serial();
+
+	TR0 = 0;
+
+	TMOD = 0x01;
+	TH0 = 0xFF;
+	TL0 = 0x80;
+	TF0 = 0;
+	IE0 = 1;
+
+		// Enable timer0;
+	TR0 = 1;
+
 	// Disable all interrupts (global interrupt enable bit)
-	EA = 0; // SFR A8.7 / IE.7
+	EA = 1; // SFR A8.7 / IE.7
 
+	uint8_t cnt = 0x00;
 
-	SBUF = 0xAA;
+	while (1) {
+		// print loop and timer count. Should be equal.
+		write_char(cnt);
+		write_char(tmr_cnt);
 
-	write_char('I');
-
-	// setup_serial();
-	while (1) {}
-		// print_string("Image installer running\n");
+		PCON |= 1;
+		cnt += 1;
+	}
 }

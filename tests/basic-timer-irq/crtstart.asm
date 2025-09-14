@@ -8,8 +8,8 @@ __interrupt_vect:
 	.ds     7
 	reti
 	.ds     7
-	reti
-	.ds     7
+	ljmp	_isr_timer0
+	.ds     5
 	reti
 	.ds     7
 	reti
