@@ -171,7 +171,7 @@ struct SimSettings {
     args: Args,
 }
 
-async fn simulator_tasks(settings: SimSettings) {
+async fn simulator_tasks(mut settings: SimSettings) {
     info!("Program loaded: size: {}", settings.prg_mem.len());
 
     HALT.store(settings.args.halt, std::sync::atomic::Ordering::Relaxed);
@@ -183,6 +183,13 @@ async fn simulator_tasks(settings: SimSettings) {
     mcu.debug = false;
 
     mcu.ext_uart_0 = settings.uart;
+
+    if let Some([0x00, 0x40]) = settings.prg_mem.get(0..2) {
+        info!("rtk image found");
+
+        settings.prg_mem = settings.prg_mem[2..].to_vec();
+    }
+
     mcu.set_program(settings.prg_mem);
 
     if HALT.load(std::sync::atomic::Ordering::Relaxed) {
@@ -278,7 +285,8 @@ async fn main() -> Result<(), Box<dyn core::error::Error>> {
 
     if let Err(err) = sid.await {
         let Ok(panic) = err.try_into_panic() else {
-            return Err(Box::new(std::io::Error::other("Emu task crashed!")))?;
+            return ret;
+            // return Err(Box::new(std::io::Error::other("Emu task crashed!")))?;
         };
 
         let ps = panic

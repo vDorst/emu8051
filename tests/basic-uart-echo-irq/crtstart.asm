@@ -13,7 +13,8 @@ __interrupt_vect:
 	reti
 	.ds     7
 	reti
-	.ds     7
+	ljmp    _isr_serial
+	.ds     5
 	reti			; 0x2b TIMER 2 IRQ
 	.ds     7
 	reti			; 0x33 NOT used by DW8051

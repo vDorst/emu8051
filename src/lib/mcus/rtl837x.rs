@@ -57,6 +57,7 @@ pub enum MCS51_REGISTERS {
     ACC = 0xE0,
     EIE = 0xE8,
     B = 0xF0,
+    SFR_FF = 0xFF,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -181,7 +182,7 @@ impl DW8051_RTL837x {
                 }
             }
             MCS51_REGISTERS::SBUF => {
-                trace!("write_sfr: SBUF = {value}");
+                debug!("write_sfr() \tSBUF = {value:02x}");
                 // Always set TI bit.
                 self.write_bit(0x99, true);
                 if let Some((tx, _)) = &mut self.ext_uart_0 {
@@ -2169,7 +2170,6 @@ impl DW8051_RTL837x {
 
     // Increment
     pub fn op_inc(&mut self, operand: MCS51_ADDRESSING) {
-        println!("op_inc: {operand:?}");
         let op = self.get_u8_mut(operand).unwrap();
         *op = op.wrapping_add(1);
     }
@@ -2277,7 +2277,9 @@ impl MCU<u8> for DW8051_RTL837x {
         if let Some((_, rx)) = &mut self.ext_uart_0
             && let Ok(val) = rx.try_recv()
         {
-            self.write_sfr(MCS51_REGISTERS::SBUF, val);
+            debug!("New rx data: {val:02x}");
+            let addr: u8 = MCS51_REGISTERS::SBUF.into();
+            self.special_function_registers[usize::from(addr) - SFR_OFFSET] = val;
             self.write_bit(0x98, true);
         }
 
@@ -2288,8 +2290,8 @@ impl MCU<u8> for DW8051_RTL837x {
             // Globel interrupt enabled?
             if ie & 0x80 != 0 {
                 // Check serial interrupt
-                let ser = self.read_sfr(MCS51_REGISTERS::SCON);
-                if ie & 0x10 != 0 && ser & 0x03 != 0x00 {
+                let scon = self.read_sfr(MCS51_REGISTERS::SCON);
+                if ie & 0x10 != 0 && scon & 0x03 != 0x00 {
                     self.run_mode = RunningMode::Irq(McuIrq::Serial);
                 } else {
                     // check timer
@@ -2305,7 +2307,7 @@ impl MCU<u8> for DW8051_RTL837x {
                 }
                 if let RunningMode::Irq(irq) = self.run_mode {
                     // Clear Idle Mode
-                    let pcon = self.get_sfr_mut(MCS51_REGISTERS::SCON).expect("Must valid");
+                    let pcon = self.get_sfr_mut(MCS51_REGISTERS::PCON).expect("Must valid");
                     *pcon &= !0x03;
                     self.op_int(irq);
                 }
@@ -2588,12 +2590,16 @@ mod tests {
 
         mcu.set_program(prg.to_vec());
 
+        for _ in 1..200 {
+            mcu.next_instruction();
+        }
+
         for &b in b"Send test" {
             send_rx.try_send(b).expect("No issues");
 
             let mut ret_c: Option<u8> = None;
 
-            for _ in 1..20 {
+            for _ in 1..200 {
                 mcu.next_instruction();
                 if let Ok(val) = recv_tx.try_recv() {
                     ret_c = Some(val);
@@ -2634,12 +2640,23 @@ mod tests {
 
         mcu.set_program(prg.to_vec());
 
-        for &b in b"Send test" {
+        // Find the first Idle moment, so we know that init is done.
+        let mut start_point_found = false;
+        for _ in 1..100 {
+            mcu.next_instruction();
+            if matches!(mcu.run_mode, RunningMode::Idle) {
+                start_point_found = true;
+                break;
+            }
+        }
+        assert!(start_point_found, "Start point not found");
+
+        for (idx, &b) in b"Send test".iter().enumerate() {
             send_rx.try_send(b).expect("No issues");
 
             let mut ret_c: Option<u8> = None;
 
-            for _ in 1..20 {
+            for _ in 1..40 {
                 mcu.next_instruction();
                 if let Ok(val) = recv_tx.try_recv() {
                     ret_c = Some(val);
@@ -2647,7 +2664,7 @@ mod tests {
                 }
             }
 
-            assert_eq!(ret_c, Some(b));
+            assert_eq!(ret_c, Some(b), "idx = {idx}");
         }
 
         println!("RI: {}", mcu.read_bit(0x98));
@@ -2711,12 +2728,24 @@ mod tests {
         // // tmr0 overflag should set
         // assert!(mcu.read_bit(0x88 + 5));
 
+        let mut start_point_found = false;
+
+        for _ in 1..100 {
+            mcu.next_instruction();
+            if matches!(mcu.run_mode, RunningMode::Idle) {
+                start_point_found = true;
+                break;
+            }
+        }
+
+        assert!(start_point_found, "Start point not found");
+
         for (idx, &b) in b"\x00\x00\x01\x01\x02\x02".iter().enumerate() {
             // send_rx.try_send(b).expect("No issues");
 
             let mut ret_c: Option<u8> = None;
 
-            for _ in 1..200 {
+            for _ in 1..300 {
                 mcu.next_instruction();
                 if let Ok(val) = recv_tx.try_recv() {
                     ret_c = Some(val);
@@ -2760,15 +2789,19 @@ mod tests {
     //     mcu.debug = true;
 
     //     let (send_tx, mut recv_tx) = channel(32);
-    //     let (_send_rx, recv_rx) = channel(32);
+    //     let (send_rx, recv_rx) = channel(32);
 
     //     mcu.ext_uart_0 = Some((send_tx, recv_rx));
 
-    //     let prg = include_bytes!("~/Downloads/SWTG124AS-v2.bin");
+    //     let prg = include_bytes!("SWTG124AS-v2.bin");
     //     mcu.set_program((&prg[2..]).to_vec());
+
+    //     send_rx.try_send(b'a').expect("works");
 
     //     for _ in 1..2000 {
     //         mcu.next_instruction();
     //     }
+
+    //     assert_eq!(recv_tx.try_recv(), Ok(b'a'));
     // }
 }
