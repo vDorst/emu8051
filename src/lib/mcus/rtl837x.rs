@@ -4,6 +4,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::traits::component::MCU;
 
+const BANK0_TOP: u16 = 0x4000;
+
 #[derive(Debug, Clone, Copy, PartialEq, TryFromPrimitive, IntoPrimitive)]
 #[repr(u8)]
 pub enum MCS51_REGISTERS {
@@ -28,6 +30,11 @@ pub enum MCS51_REGISTERS {
     SFR_97 = 0x97,
     SCON = 0x98,
     SBUF = 0x99,
+    SFR_FLASH_MODEB = 0x9a,
+    SFR_FLASH_CONF_DIV = 0x9b,
+    SFR_FLASH_CONF_RCMD = 0x9c,
+    SFR_FLASH_DUMMYCICLES = 0x9d,
+    SFR_FLASH_TCONF = 0x9e,
     SFR_EXEC_GO = 0xA0,
     SFR_EXEC_STATUS = 0xA1,
     SFR_REG_ADDRH = 0xA2,
@@ -36,6 +43,13 @@ pub enum MCS51_REGISTERS {
     SFR_REG_DATA_16 = 0xA5,
     SFR_REG_DATA_8 = 0xA6,
     SFR_REG_DATA_0 = 0xA7,
+    SFR_FLASH_ADDR0 = 0xa9,
+    SFR_FLASH_ADDR8 = 0xaa,
+    SFR_FLASH_ADDR16 = 0xab,
+    SFR_FLASH_DATA0 = 0xac,
+    SFR_FLASH_DATA8 = 0xad,
+    SFR_FLASH_DATA16 = 0xae,
+    SFR_FLASH_DATA24 = 0xaf,
     IE = 0xA8,
     P3 = 0xB0,
     SFR_FLASH_CMD_R = 0xB1,
@@ -43,6 +57,7 @@ pub enum MCS51_REGISTERS {
     IP = 0xB8,
     SFR_b9 = 0xb9,
     SFR_ba = 0xba,
+    SFR_BANK_RET = 0xbb,
     SFR_FLASH_CONFIG = 0xBC,
     SFR_SMI_REGH = 0xC2,
     SFR_SMI_REGL = 0xC3,
@@ -58,6 +73,18 @@ pub enum MCS51_REGISTERS {
     EIE = 0xE8,
     B = 0xF0,
     SFR_FF = 0xFF,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, TryFromPrimitive, IntoPrimitive)]
+#[repr(u8)]
+pub enum MCS51_BITS {
+    SFR_FLASH_EXEC_BUSY = 0x80,
+    SFR_FLASH_EXEC_GO = 0x82,
+    EX2 = 0xe8,
+    EX3 = 0xe9,
+    PX3 = 0xf9,
+    RI = 0x98,
+    TI = 0x99,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -101,7 +128,7 @@ const SFR_OFFSET: usize = 0x80;
 
 pub struct DW8051_RTL837x {
     pub pc: u16,
-    pub op_pc: u16,
+    pub op_pc: usize,
     pub timer0: u16,
     pub run_mode: RunningMode,
     program: Vec<u8>,
@@ -184,12 +211,38 @@ impl DW8051_RTL837x {
             MCS51_REGISTERS::SBUF => {
                 debug!("write_sfr() \tSBUF = {value:02x}");
                 // Always set TI bit.
-                self.write_bit(0x99, true);
+                self.write_bit(MCS51_BITS::TI.into(), true);
                 if let Some((tx, _)) = &mut self.ext_uart_0 {
                     tx.try_send(value).expect("Not to fail");
                 }
                 return;
             }
+            MCS51_REGISTERS::PSBANK => {
+                warn!("PSBANK = {value:02x}");
+            }
+
+            MCS51_REGISTERS::SFR_BANK_RET => {
+                warn!("SFR_BANK_RET = {value:02x}");
+            }
+
+            MCS51_REGISTERS::SFR_FLASH_EXEC => {
+                // Execute FLASH command
+                if value & 0x02 != 0 {
+                    let flash_cmd = self.read_sfr(MCS51_REGISTERS::SFR_FLASH_CMD_R);
+                    let flash_addr = u32::from_le_bytes([
+                        0x00,
+                        self.read_sfr(MCS51_REGISTERS::SFR_FLASH_ADDR16),
+                        self.read_sfr(MCS51_REGISTERS::SFR_FLASH_ADDR8),
+                        self.read_sfr(MCS51_REGISTERS::SFR_FLASH_ADDR0),
+                    ]);
+                    match flash_cmd {
+                        // Read UID
+                        0x4b => info!("Read UID: addr {flash_addr:08x}"),
+                        _ => warn!("SFR_FLASH_EXEC = {value:02x} CMD = {flash_cmd:02x}"),
+                    }
+                }
+            }
+
             _ => (),
         }
 
@@ -458,7 +511,7 @@ impl DW8051_RTL837x {
             (MCS51_REGISTERS::SCON, 0x00),
             // Don´t reset SBUF, will trigger a uart write
             // (MCS51_REGISTERS::SBUF, 0x00),
-            (MCS51_REGISTERS::SFR_EXEC_GO, 0xFF),
+            // (MCS51_REGISTERS::SFR_EXEC_GO, 0xFF),
             (MCS51_REGISTERS::IE, 0x00),
             (MCS51_REGISTERS::P3, 0xFF),
             (MCS51_REGISTERS::IP, 0x00),
@@ -470,6 +523,7 @@ impl DW8051_RTL837x {
             (MCS51_REGISTERS::PSW, 0x00),
             (MCS51_REGISTERS::ACC, 0x00),
             (MCS51_REGISTERS::B, 0x00),
+            (MCS51_REGISTERS::PSBANK, 0x00),
         ];
         for (reg, val) in init_values {
             self.write_sfr(reg, val);
@@ -2280,7 +2334,7 @@ impl MCU<u8> for DW8051_RTL837x {
             debug!("New rx data: {val:02x}");
             let addr: u8 = MCS51_REGISTERS::SBUF.into();
             self.special_function_registers[usize::from(addr) - SFR_OFFSET] = val;
-            self.write_bit(0x98, true);
+            self.write_bit(MCS51_BITS::RI.into(), true);
         }
 
         // jump interrupt, this needs to be optimized, but for now it is OK.
@@ -2315,15 +2369,20 @@ impl MCU<u8> for DW8051_RTL837x {
         }
 
         if self.run_mode.is_running() {
-            let Some(opcode) = self.program.get(self.pc as usize).copied() else {
+            self.op_pc = usize::from(self.pc);
+            // Add the bank offset
+            if self.pc >= BANK0_TOP {
+                self.op_pc |= usize::from(self.read_sfr(MCS51_REGISTERS::PSBANK)) << 16;
+            }
+
+            let Some(opcode) = self.program.get(self.op_pc).copied() else {
                 error!(
                     "Error: Out of Program Mem: PC {:04x} MEM: {:04x}",
-                    self.pc,
+                    self.op_pc,
                     self.program.len()
                 );
                 return;
             };
-            self.op_pc = self.pc;
 
             // println!("\t PC {:04x} {:02x}", self.pc, opcode);
 
@@ -2435,8 +2494,8 @@ mod tests {
             }
         }
 
-        println!("RI: {}", mcu.read_bit(0x98));
-        println!("TI: {}", mcu.read_bit(0x99));
+        println!("RI: {}", mcu.read_bit(MCS51_BITS::RI.into()));
+        println!("TI: {}", mcu.read_bit(MCS51_BITS::TI.into()));
 
         assert_eq!(
             String::from_utf8_lossy(&serial_console),
@@ -2449,8 +2508,8 @@ mod tests {
         let mut mcu = DW8051_RTL837x::new();
         mcu.setup();
 
-        assert!(!mcu.read_bit(0x98));
-        assert!(!mcu.read_bit(0x99));
+        assert!(!mcu.read_bit(MCS51_BITS::RI.into()));
+        assert!(!mcu.read_bit(MCS51_BITS::TI.into()));
     }
 
     #[test]
@@ -2555,8 +2614,8 @@ mod tests {
             }
         }
 
-        println!("RI: {}", mcu.read_bit(0x98));
-        println!("TI: {}", mcu.read_bit(0x99));
+        println!("RI: {}", mcu.read_bit(MCS51_BITS::RI.into()));
+        println!("TI: {}", mcu.read_bit(MCS51_BITS::TI.into()));
 
         assert_eq!(
             String::from_utf8_lossy(&serial_console),
@@ -2610,8 +2669,8 @@ mod tests {
             assert_eq!(ret_c, Some(b));
         }
 
-        println!("RI: {}", mcu.read_bit(0x98));
-        println!("TI: {}", mcu.read_bit(0x99));
+        println!("RI: {}", mcu.read_bit(MCS51_BITS::RI.into()));
+        println!("TI: {}", mcu.read_bit(MCS51_BITS::TI.into()));
     }
 
     #[test]
@@ -2667,8 +2726,8 @@ mod tests {
             assert_eq!(ret_c, Some(b), "idx = {idx}");
         }
 
-        println!("RI: {}", mcu.read_bit(0x98));
-        println!("TI: {}", mcu.read_bit(0x99));
+        println!("RI: {}", mcu.read_bit(MCS51_BITS::RI.into()));
+        println!("TI: {}", mcu.read_bit(MCS51_BITS::TI.into()));
     }
 
     #[test]
@@ -2762,13 +2821,13 @@ mod tests {
 
             println!("idx {idx} {ret_c:?} {b}");
             println!("AE: {}", mcu.read_bit(0xA8 + 7));
-            println!("RI: {}", mcu.read_bit(0x98));
-            println!("TI: {}", mcu.read_bit(0x99));
+            println!("RI: {}", mcu.read_bit(MCS51_BITS::RI.into()));
+            println!("TI: {}", mcu.read_bit(MCS51_BITS::TI.into()));
             assert_eq!(ret_c, Some(b));
         }
 
-        println!("RI: {}", mcu.read_bit(0x98));
-        println!("TI: {}", mcu.read_bit(0x99));
+        println!("RI: {}", mcu.read_bit(MCS51_BITS::RI.into()));
+        println!("TI: {}", mcu.read_bit(MCS51_BITS::TI.into()));
     }
 
     // #[test]
@@ -2793,7 +2852,7 @@ mod tests {
 
     //     mcu.ext_uart_0 = Some((send_tx, recv_rx));
 
-    //     let prg = include_bytes!("SWTG124AS-v2.bin");
+    //     let prg = include_bytes!("../../../SWTG124AS-v2.bin");
     //     mcu.set_program((&prg[2..]).to_vec());
 
     //     send_rx.try_send(b'a').expect("works");
